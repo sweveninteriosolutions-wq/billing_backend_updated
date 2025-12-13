@@ -83,8 +83,6 @@ async def get_product_api(
     }
 
 
-
-
 @router.patch("/{product_id}", response_model=ProductResponseSchema)
 async def update_product_api(
     product_id: int,
@@ -95,9 +93,7 @@ async def update_product_api(
     product = await update_product(db, product_id, payload, current_user)
     return {"msg": "Product updated successfully", "data": product}
 
-# -----------------------
-# DEACTIVATE PRODUCT
-# -----------------------
+
 @router.delete("/{product_id}", response_model=ProductResponseSchema)
 async def deactivate_product_api(
     product_id: int,
@@ -113,10 +109,6 @@ async def deactivate_product_api(
     )
     return {"msg": "Product deactivated successfully", "data": product}
 
-
-# -----------------------
-# REACTIVATE PRODUCT
-# -----------------------
 @router.post("/{product_id}/activate", response_model=ProductResponseSchema)
 async def reactivate_product_api(
     product_id: int,

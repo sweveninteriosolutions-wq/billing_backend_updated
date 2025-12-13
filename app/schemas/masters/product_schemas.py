@@ -67,7 +67,3 @@ class ProductListResponseSchema(BaseModel):
     msg: str
     total: int
     data: List[ProductTableSchema]
-
-class ProductResponseSchema(BaseModel):
-    msg: str
-    data: ProductTableSchema | None = None

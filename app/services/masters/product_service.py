@@ -1,7 +1,6 @@
 # app/services/masters/product_service.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
 from fastapi import HTTPException, status
 
 from app.models.masters.product_models import Product
@@ -12,7 +11,7 @@ from app.schemas.masters.product_schemas import (
 )
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
-from sqlalchemy import select, func, or_, asc, desc
+from sqlalchemy import select, func, or_, asc, desc,update
 from app.models.masters.product_models import Product
 
 ALLOWED_SORT_FIELDS = {
@@ -42,8 +41,8 @@ def _map_product(product: Product) -> ProductTableSchema:
         created_by_id=product.created_by_id,
         updated_by_id=product.updated_by_id,
 
-        created_by_name=product.created_by_username,   # ✅ from hybrid_property
-        updated_by_name=product.updated_by_username,   # ✅ from hybrid_property
+        created_by_name=product.created_by_username, 
+        updated_by_name=product.updated_by_username,  
     )
 
 
@@ -239,7 +238,6 @@ async def update_product(
 
     return _map_product(product)
 
-# app/services/masters/product_service.py
 
 # -----------------------
 # DEACTIVATE PRODUCT (SOFT DELETE)
