@@ -69,8 +69,8 @@ async def list_inventory_balances(
 async def low_stock_alerts(db: AsyncSession):
     stmt = (
         select(InventoryBalance, Product, InventoryLocation)
-        .join(Product)
-        .join(InventoryLocation)
+        .join(Product, InventoryBalance.product_id == Product.id)
+        .join(InventoryLocation, InventoryBalance.location_id == InventoryLocation.id)
         .where(
             InventoryBalance.quantity <= Product.min_stock_threshold
         )

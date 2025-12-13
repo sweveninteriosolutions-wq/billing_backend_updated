@@ -1,4 +1,4 @@
-# app/services/inventory/inventory_service.py
+# app/services/inventory/inventory_movement_service.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 
 from app.models.inventory.inventory_balance_models import InventoryBalance
 from app.models.inventory.inventory_movement_models import InventoryMovement
-from app.models.enums.inventory_movement_status import InventoryMovementType
+from app.models.enums.inventory_movement_type import InventoryMovementType
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
 
@@ -89,17 +89,18 @@ async def apply_inventory_movement(
             balance = InventoryBalance(
                 product_id=product_id,
                 location_id=location_id,
-                quantity_on_hand=0,
-                quantity_reserved=0,
+                quantity=0,
                 created_by_id=actor_user.id,
             )
+
             db.add(balance)
             await db.flush()
 
         # ------------------------------------
         # 3. Validate non-negative stock
         # ------------------------------------
-        new_quantity = balance.quantity_on_hand + quantity_change
+        new_quantity = balance.quantity + quantity_change
+
         if new_quantity < 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -123,7 +124,8 @@ async def apply_inventory_movement(
         # ------------------------------------
         # 5. Update balance (derived)
         # ------------------------------------
-        balance.quantity_on_hand = new_quantity
+        balance.quantity = new_quantity
+
         balance.updated_by_id = actor_user.id
 
         await db.commit()

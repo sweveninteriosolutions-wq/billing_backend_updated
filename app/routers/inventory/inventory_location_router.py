@@ -21,29 +21,6 @@ from app.schemas.inventory.location_schemas import (
 
 router = APIRouter(prefix="/inventory/locations", tags=["Inventory Locations"])
 
-# app/routers/inventory/location_router.py
-
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.db import get_db
-from app.utils.check_roles import require_role
-from app.services.inventory.location_service import (
-    create_location,
-    list_locations,
-    update_location,
-    deactivate_location,
-    reactivate_location,
-)
-from app.schemas.inventory.location_schemas import (
-    InventoryLocationCreateSchema,
-    InventoryLocationUpdateSchema,
-    InventoryLocationResponseSchema,
-    InventoryLocationListResponseSchema,
-)
-
-router = APIRouter(prefix="/inventory/locations", tags=["Inventory Locations"])
-
 @router.post("/", response_model=InventoryLocationResponseSchema)
 async def create_location_api(
     payload: InventoryLocationCreateSchema,
@@ -63,16 +40,6 @@ async def list_locations_api(
 ):
     total, data = await list_locations(db, active_only, page, page_size)
     return {"msg": "Locations fetched", "total": total, "data": data}
-
-@router.patch("/{location_id}", response_model=InventoryLocationResponseSchema)
-async def update_location_api(
-    location_id: int,
-    payload: InventoryLocationUpdateSchema,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
-):
-    loc = await update_location(db, location_id, payload, current_user)
-    return {"msg": "Location updated", "data": loc}
 
 @router.patch("/{location_id}", response_model=InventoryLocationResponseSchema)
 async def update_location_api(

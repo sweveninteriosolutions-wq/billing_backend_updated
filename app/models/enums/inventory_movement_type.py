@@ -1,6 +1,7 @@
-# app/constants/inventory.py
+# app/models/enums/inventory_movement_type.py
 
 from enum import Enum
+
 
 class InventoryMovementType(str, Enum):
     STOCK_IN = "STOCK_IN"

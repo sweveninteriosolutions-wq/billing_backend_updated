@@ -42,4 +42,4 @@ class InventoryLocationResponseSchema(BaseModel):
 class InventoryLocationListResponseSchema(BaseModel):
     msg: str
     total: int
-    data: List[InventoryLocationTableSchema]
+    data: list[InventoryLocationTableSchema]

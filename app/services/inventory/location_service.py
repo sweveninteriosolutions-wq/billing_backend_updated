@@ -1,7 +1,6 @@
-# app/services/inventory/location_service.py
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.models.inventory.inventory_location_models import InventoryLocation
@@ -29,18 +28,15 @@ def _map_location(loc: InventoryLocation) -> InventoryLocationTableSchema:
         updated_by_name=loc.updated_by.username if loc.updated_by else None,
     )
 
+
+# ------------------------------------------------------------------
+# CREATE
+# ------------------------------------------------------------------
 async def create_location(
     db: AsyncSession,
     payload: InventoryLocationCreateSchema,
     current_user,
 ):
-    exists = await db.scalar(
-        select(InventoryLocation.id)
-        .where(InventoryLocation.code == payload.code)
-    )
-    if exists:
-        raise HTTPException(status_code=400, detail="Location code already exists")
-
     location = InventoryLocation(
         code=payload.code.lower(),
         name=payload.name,
@@ -48,7 +44,16 @@ async def create_location(
     )
 
     db.add(location)
-    await db.commit()
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Location code already exists",
+        )
+
     await db.refresh(location)
 
     await emit_activity(
@@ -63,6 +68,10 @@ async def create_location(
 
     return _map_location(location)
 
+
+# ------------------------------------------------------------------
+# LIST
+# ------------------------------------------------------------------
 async def list_locations(
     db: AsyncSession,
     active_only: bool,
@@ -86,6 +95,10 @@ async def list_locations(
 
     return total, [_map_location(l) for l in result.scalars().all()]
 
+
+# ------------------------------------------------------------------
+# UPDATE (Optimistic Locking)
+# ------------------------------------------------------------------
 async def update_location(
     db: AsyncSession,
     location_id: int,
@@ -94,11 +107,17 @@ async def update_location(
 ):
     existing = await db.get(InventoryLocation, location_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Location not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found",
+        )
 
     updates = payload.model_dump(exclude_unset=True, exclude={"version"})
     if not updates:
-        raise HTTPException(status_code=400, detail="No changes provided")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No changes provided",
+        )
 
     changes = []
     for field, value in updates.items():
@@ -107,7 +126,10 @@ async def update_location(
             changes.append(f"{field}: {old} → {value}")
 
     if not changes:
-        raise HTTPException(status_code=400, detail="No actual changes detected")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No actual changes detected",
+        )
 
     stmt = (
         update(InventoryLocation)
@@ -147,14 +169,37 @@ async def update_location(
 
     return _map_location(location)
 
-async def deactivate_location(db, location_id: int, current_user):
-    location = await db.get(InventoryLocation, location_id)
-    if not location or not location.is_active:
-        raise HTTPException(status_code=404)
 
-    location.is_active = False
-    location.version += 1
-    location.updated_by_id = current_user.id
+# ------------------------------------------------------------------
+# DEACTIVATE (Atomic)
+# ------------------------------------------------------------------
+async def deactivate_location(
+    db: AsyncSession,
+    location_id: int,
+    current_user,
+):
+    stmt = (
+        update(InventoryLocation)
+        .where(
+            InventoryLocation.id == location_id,
+            InventoryLocation.is_active.is_(True),
+        )
+        .values(
+            is_active=False,
+            version=InventoryLocation.version + 1,
+            updated_by_id=current_user.id,
+        )
+        .returning(InventoryLocation)
+    )
+
+    result = await db.execute(stmt)
+    location = result.scalar_one_or_none()
+
+    if not location:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Location not found or already inactive",
+        )
 
     await db.commit()
 
@@ -170,14 +215,37 @@ async def deactivate_location(db, location_id: int, current_user):
 
     return _map_location(location)
 
-async def reactivate_location(db, location_id: int, current_user):
-    location = await db.get(InventoryLocation, location_id)
-    if not location or location.is_active:
-        raise HTTPException(status_code=404)
 
-    location.is_active = True
-    location.version += 1
-    location.updated_by_id = current_user.id
+# ------------------------------------------------------------------
+# REACTIVATE (Atomic)
+# ------------------------------------------------------------------
+async def reactivate_location(
+    db: AsyncSession,
+    location_id: int,
+    current_user,
+):
+    stmt = (
+        update(InventoryLocation)
+        .where(
+            InventoryLocation.id == location_id,
+            InventoryLocation.is_active.is_(False),
+        )
+        .values(
+            is_active=True,
+            version=InventoryLocation.version + 1,
+            updated_by_id=current_user.id,
+        )
+        .returning(InventoryLocation)
+    )
+
+    result = await db.execute(stmt)
+    location = result.scalar_one_or_none()
+
+    if not location:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Location not found or already active",
+        )
 
     await db.commit()
 
@@ -192,4 +260,3 @@ async def reactivate_location(db, location_id: int, current_user):
     )
 
     return _map_location(location)
-

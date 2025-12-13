@@ -79,6 +79,11 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.REACTIVATE_LOCATION:
         "{actor_role} ({actor_email}) reactivated inventory location {target_name}",
+    ActivityCode.INVENTORY_MOVEMENT:
+    "{actor_role} ({actor_email}) performed inventory movement "
+    "{movement_type} of {quantity_change} units "
+    "for product {product_id} at location {location_id} "
+    "(ref: {reference_type}:{reference_id})",
 
 }
 
