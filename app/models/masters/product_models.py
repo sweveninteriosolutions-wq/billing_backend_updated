@@ -28,9 +28,11 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
 
+    version = Column(Integer, nullable=False, default=1)
+
     supplier = relationship("Supplier", back_populates="products", lazy="joined")
-    inventory_balances = relationship("InventoryBalance", back_populates="product", lazy="selectin")
-    inventory_movements = relationship("InventoryMovement", back_populates="product", lazy="selectin")
+    # inventory_balances = relationship("InventoryBalance", back_populates="product", lazy="selectin")
+    # inventory_movements = relationship("InventoryMovement", back_populates="product", lazy="selectin")
 
     __table_args__ = (
         Index("ix_product_name_category", "name", "category"),

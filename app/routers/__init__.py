@@ -7,6 +7,7 @@ from .auth.activity_router import router as activity_router
 
 from .masters.customer_router import router as customer_router
 from .masters.supplier_router import router as supplier_router
+from .masters.product_router import router as product_router
 
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
 "activity_router",
 "customer_router",
 "supplier_router",
+"product_router",
 ]

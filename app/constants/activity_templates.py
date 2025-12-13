@@ -53,4 +53,19 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.REACTIVATE_SUPPLIER:
         "{actor_role} ({actor_email}) reactivated supplier {target_name}",
+    
+    # ---------------- PRODUCTS ----------------
+    ActivityCode.CREATE_PRODUCT:
+    "{actor_role} ({actor_email}) created product {target_name} ({sku})",
+
+    ActivityCode.UPDATE_PRODUCT:
+    "{actor_role} ({actor_email}) updated product {target_name}: {changes}",
+
+    ActivityCode.DEACTIVATE_PRODUCT:
+    "{actor_role} ({actor_email}) deactivated product {target_name}",
+
+    ActivityCode.REACTIVATE_PRODUCT:
+    "{actor_role} ({actor_email}) reactivated product {target_name}",
+
 }
+
