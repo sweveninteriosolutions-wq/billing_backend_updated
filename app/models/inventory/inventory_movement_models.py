@@ -21,9 +21,8 @@ class InventoryMovement(Base, TimestampMixin, AuditMixin):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("inventory_locations.id"), nullable=False, index=True)
 
-    quantity_change = Column(Integer, nullable=False)  # +ve = stock in, -ve = stock out
-    reference_type = Column(String(50), nullable=False)  # GRN, INVOICE, TRANSFER, ADJUSTMENT
-    
+    quantity_change = Column(Integer, nullable=False)
+    reference_type = Column(String(50), nullable=False)
     reference_id = Column(Integer, nullable=False)
 
     product = relationship("Product", back_populates="inventory_movements", lazy="joined")
