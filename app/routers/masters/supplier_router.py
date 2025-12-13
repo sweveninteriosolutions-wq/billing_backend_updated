@@ -7,6 +7,7 @@ from app.schemas.masters.supplier_schemas import (
     SupplierUpdateSchema,
     SupplierResponseSchema,
     SupplierListResponseSchema,
+    VersionPayload,
 )
 from app.services.masters.supplier_service import (
     create_supplier,
@@ -78,7 +79,7 @@ async def update_supplier_api(
 )
 async def deactivate_supplier_api(
     supplier_id: int,
-    payload: SupplierUpdateSchema,
+    payload: VersionPayload,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
 ):
@@ -100,7 +101,7 @@ async def deactivate_supplier_api(
 )
 async def reactivate_supplier_api(
     supplier_id: int,
-    payload: SupplierUpdateSchema,
+    payload: VersionPayload,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(["admin"])),
 ):

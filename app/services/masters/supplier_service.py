@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from app.models.masters.supplier_models import Supplier
 from app.schemas.masters.supplier_schemas import (
@@ -61,7 +62,6 @@ async def create_supplier(
     exists = await db.scalar(
         select(Supplier.id).where(
             Supplier.name == payload.name,
-            Supplier.is_deleted.is_(False),
         )
     )
     if exists:
@@ -79,11 +79,11 @@ async def create_supplier(
 
     try:
         await db.commit()
-    except Exception:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid supplier data",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Supplier with this name already exists",
         )
 
     await db.refresh(supplier)
@@ -116,7 +116,8 @@ async def list_suppliers(
     base = select(Supplier).where(Supplier.is_deleted.is_(False))
 
     if search:
-        base = base.where(Supplier.name.ilike(f"%{search}%"))
+        search_term = search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        base = base.where(Supplier.name.ilike(f"%{search_term}%", escape='\\'))
 
     sort_column = ALLOWED_SORT_FIELDS.get(sort_by, Supplier.created_at)
     sort_order = asc(sort_column) if order.lower() == "asc" else desc(sort_column)
@@ -264,7 +265,7 @@ async def deactivate_supplier(
     if not supplier:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier was modified by another process",
+            detail="Supplier was modified by another process. Refresh and retry.",
         )
 
     await db.commit()
@@ -314,7 +315,7 @@ async def reactivate_supplier(
     if not supplier:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier was modified by another process",
+            detail="Supplier was modified by another process. Refresh and retry.",
         )
 
     await db.commit()

@@ -54,3 +54,6 @@ class SupplierListResponseSchema(BaseModel):
     msg: str
     total: int
     data: List[SupplierTableSchema]
+
+class VersionPayload(BaseModel):
+    version: int
