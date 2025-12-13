@@ -1,12 +1,15 @@
 from app.constants.activity_codes import ActivityCode
 
+
 ACTIVITY_TEMPLATES = {
+    # ---------------- AUTH ----------------
     ActivityCode.LOGIN:
         "{actor_role} ({actor_email}) logged in",
 
     ActivityCode.LOGOUT:
         "{actor_role} ({actor_email}) logged out",
 
+    # ---------------- USERS ----------------
     ActivityCode.CREATE_USER:
         "{actor_role} ({actor_email}) created user {target_email} with role {target_role}",
 
@@ -24,7 +27,8 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.REACTIVATE_USER:
         "{actor_role} ({actor_email}) reactivated user {target_email}",
-    
+
+    # ---------------- CUSTOMERS ----------------
     ActivityCode.CREATE_CUSTOMER:
         "{actor_role} ({actor_email}) created customer {target_name}",
 
@@ -36,4 +40,17 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.REACTIVATE_CUSTOMER:
         "{actor_role} ({actor_email}) reactivated customer {target_name}",
+
+    # ---------------- SUPPLIERS ----------------
+    ActivityCode.CREATE_SUPPLIER:
+        "{actor_role} ({actor_email}) created supplier {target_name}",
+
+    ActivityCode.UPDATE_SUPPLIER:
+        "{actor_role} ({actor_email}) updated supplier {target_name}: {changes}",
+
+    ActivityCode.DEACTIVATE_SUPPLIER:
+        "{actor_role} ({actor_email}) deactivated supplier {target_name}",
+
+    ActivityCode.REACTIVATE_SUPPLIER:
+        "{actor_role} ({actor_email}) reactivated supplier {target_name}",
 }
