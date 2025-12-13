@@ -67,5 +67,23 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.REACTIVATE_PRODUCT:
     "{actor_role} ({actor_email}) reactivated product {target_name}",
 
+    # ---------------- INVENTORY ----------------
+    ActivityCode.CREATE_LOCATION:
+        "{actor_role} ({actor_email}) created inventory location {target_name}",
+
+    ActivityCode.UPDATE_LOCATION:
+        "{actor_role} ({actor_email}) updated inventory location {target_name}: {changes}",
+
+    ActivityCode.DEACTIVATE_LOCATION:
+        "{actor_role} ({actor_email}) deactivated inventory location {target_name}",
+
+    ActivityCode.REACTIVATE_LOCATION:
+        "{actor_role} ({actor_email}) reactivated inventory location {target_name}",
+    ActivityCode.INVENTORY_MOVEMENT:
+    "{actor_role} ({actor_email}) performed inventory movement "
+    "{movement_type} of {quantity_change} units "
+    "for product {product_id} at location {location_id} "
+    "(ref: {reference_type}:{reference_id})",
+
 }
 
