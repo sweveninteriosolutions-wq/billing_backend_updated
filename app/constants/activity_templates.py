@@ -25,7 +25,7 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.REACTIVATE_USER:
         "{actor_role} ({actor_email}) reactivated user {target_email}",
     
-      ActivityCode.CREATE_CUSTOMER:
+    ActivityCode.CREATE_CUSTOMER:
         "{actor_role} ({actor_email}) created customer {target_name}",
 
     ActivityCode.UPDATE_CUSTOMER:

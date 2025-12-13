@@ -221,7 +221,7 @@ async def delete_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
 
     customer.is_active = False
-    customer.updated_by = current_user.id
+    customer.updated_by_id  = current_user.id
     customer.version += 1
 
     await db.commit()

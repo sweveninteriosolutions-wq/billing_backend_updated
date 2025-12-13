@@ -96,14 +96,10 @@ async def refresh_tokens(
 
     # New access token
     access_token = create_access_token(
-        data={
-            "sub": user.username,
-            "user_id": user.id,
-            "role": user.role,
-        },
+        subject=user.username,
         token_version=user.token_version,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
+        )   
 
     await db.commit()
 

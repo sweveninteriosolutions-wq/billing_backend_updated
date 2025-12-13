@@ -33,8 +33,11 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
                     username=user.username,
                     message=message,
                 )
-            except Exception:
-                # NEVER break request flow
+            except Exception as e:
+                            # NEVER break request flow, but log the error for debugging.
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to log user activity: {e}", exc_info=True)
                 pass
 
         return response

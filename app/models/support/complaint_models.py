@@ -34,7 +34,7 @@ class Complaint(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     priority = Column(Enum(ComplaintPriority), nullable=False, default=ComplaintPriority.medium)
     verified_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    customer = relationship("Customer", lazy="joined")
+    customer = relationship("Customer", back_populates="complaints", lazy="joined")
     invoice = relationship("Invoice", lazy="selectin")
     sales_order = relationship("SalesOrder", lazy="selectin")
     quotation = relationship("Quotation", lazy="selectin")

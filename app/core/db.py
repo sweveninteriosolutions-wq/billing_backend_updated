@@ -62,5 +62,9 @@ import app.models
 
 # ✅ Create tables automatically (for dev)
 async def init_models():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    import os
+    # This should only be run in a development environment.
+    # In production, you should use a migration tool like Alembic.
+    if os.getenv("APP_ENV", "production") == "development":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)

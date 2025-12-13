@@ -47,6 +47,7 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     sales_order = relationship("SalesOrder", back_populates="invoices", lazy="joined")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
     loyalty_tokens = relationship("LoyaltyToken", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
+    discount = relationship("Discount", back_populates="invoices", lazy="joined")
 
     __table_args__ = (
         Index("ix_invoice_customer_status", "customer_id", "status"),
