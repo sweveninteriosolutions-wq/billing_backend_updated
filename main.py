@@ -1,8 +1,7 @@
 # main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import (user_router, auth_router, activity_router, customer_router, supplier_router, product_router
-                         , inventory_balance_router, inventory_location_router)
+from app.routers import (user_router, auth_router, activity_router, customer_router, supplier_router, product_router)
 from app.core.db import Base, engine, init_models
 
 app = FastAPI(
@@ -32,8 +31,6 @@ app.include_router(activity_router)
 app.include_router(customer_router)
 app.include_router(supplier_router)
 app.include_router(product_router)
-app.include_router(inventory_balance_router)  #added
-app.include_router(inventory_location_router)
 
 #added
 

@@ -22,8 +22,6 @@ class InventoryLocation(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     is_active = Column(Boolean, default=True, nullable=False)
 
-    version = Column(Integer, nullable=False, default=1)
-    
     inventory_balances = relationship("InventoryBalance", back_populates="location", lazy="selectin")
     inventory_movements = relationship("InventoryMovement", back_populates="location", lazy="selectin")
 
