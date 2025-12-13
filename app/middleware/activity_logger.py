@@ -24,7 +24,7 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
         if custom_message:
             message = custom_message
 
-        # 🔴 NEW SESSION — never reuse request DB session
+        # NEW SESSION — never reuse request DB session
         async with AsyncSessionLocal() as db:
             try:
                 await log_user_activity(

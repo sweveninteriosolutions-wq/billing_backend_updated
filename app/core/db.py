@@ -6,7 +6,7 @@ import ssl
 
 Base = declarative_base()
 
-# ✅ Build connect_args safely based on DB type
+# Build connect_args safely based on DB type
 if DB_TYPE == "postgres":
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
@@ -25,7 +25,7 @@ else:
     connect_args = {"check_same_thread": False}
     pool_args = {}
 
-# ✅ Engine
+# Engine
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
@@ -34,7 +34,7 @@ engine = create_async_engine(
     **pool_args,
 )
 
-# ✅ Session factory
+# Session factory
 AsyncSessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -43,12 +43,12 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
-# ✅ DB dependency
+# DB dependency
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
-# ✅ Foreign key enforcement for SQLite
+# Foreign key enforcement for SQLite
 if DB_TYPE == "sqlite":
     from sqlalchemy import event
 
@@ -60,7 +60,7 @@ if DB_TYPE == "sqlite":
 
 import app.models
 
-# ✅ Create tables automatically (for dev)
+# Create tables automatically (for dev)
 async def init_models():
     import os
     # This should only be run in a development environment.
