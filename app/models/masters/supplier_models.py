@@ -18,7 +18,7 @@ class Supplier(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     version = Column(Integer, nullable=False, default=1)
 
-    # grns = relationship("GRN", back_populates="supplier", lazy="selectin")
+    grns = relationship("GRN", back_populates="supplier", lazy="selectin")
     products = relationship("Product", back_populates="supplier", lazy="selectin")
 
     __table_args__ = (

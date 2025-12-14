@@ -11,15 +11,21 @@ from .masters.product_router import router as product_router
 
 from .inventory.inventory_balance_router import router as inventory_balance_router
 from .inventory.inventory_location_router import router as inventory_location_router    
+from .inventory.grn_router import router as grn_router
 
 
 __all__ = [
 "user_router",
+
 "auth_router",
 "activity_router",
+
 "customer_router",
 "supplier_router",
 "product_router",
+
 "inventory_balance_router",
 "inventory_location_router",
+"grn_router",
+
 ]

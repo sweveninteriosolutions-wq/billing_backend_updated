@@ -21,6 +21,7 @@ class GRN(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     id = Column(Integer, primary_key=True)
 
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
+    location_id = Column(Integer, ForeignKey("inventory_locations.id"), nullable=False, index=True)
 
     purchase_order = Column(String(100), nullable=True)
     bill_number = Column(String(100), nullable=True)
@@ -28,6 +29,8 @@ class GRN(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     notes = Column(Text, nullable=True)
 
     status = Column(String(50), nullable=False, default="draft")  # draft → verified → cancelled
+
+    version = Column(Integer, nullable=False, default=1)
 
     supplier = relationship("Supplier", back_populates="grns", lazy="joined")
     items = relationship("GRNItem", back_populates="grn", cascade="all, delete-orphan", lazy="selectin")

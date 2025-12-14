@@ -85,5 +85,16 @@ ACTIVITY_TEMPLATES = {
     "for product {product_id} at location {location_id} "
     "(ref: {reference_type}:{reference_id})",
 
+    # ---------------- GRN ----------------
+    ActivityCode.CREATE_GRN:
+    "{actor_role} ({actor_email}) created GRN {target_name}",
+    ActivityCode.UPDATE_GRN:
+    "{actor_role} ({actor_email}) updated GRN {target_name}: {changes}",
+    ActivityCode.VERIFY_GRN:
+    "{actor_role} ({actor_email}) verified GRN {target_name}",
+    ActivityCode.DELETE_GRN:
+    "{actor_role} ({actor_email}) deleted GRN {target_name}",
+
+
 }
 
