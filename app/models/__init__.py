@@ -8,6 +8,7 @@ from app.models.inventory.grn_models import GRN, GRNItem
 from app.models.masters.product_models import Product
 from app.models.masters.supplier_models import Supplier
 from app.models.masters.customer_models import Customer
+from app.models.masters.discount_models import Discount
 
 #users and auth
 from app.models.users.user_models import User
