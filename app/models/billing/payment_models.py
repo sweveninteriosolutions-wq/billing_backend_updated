@@ -14,7 +14,6 @@ class Payment(Base, TimestampMixin, AuditMixin):
     payment_method = Column(String(50), nullable=True)
 
     invoice = relationship("Invoice", back_populates="payments", lazy="joined")
-
-
+        
     def __repr__(self):
         return f"<Payment id={self.id} amount={self.amount}>"

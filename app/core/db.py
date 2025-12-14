@@ -19,7 +19,13 @@ if DB_TYPE == "postgres":
         "ssl": ssl_ctx,
     }
 
-    pool_args = {"pool_size": 5, "max_overflow": 10}
+    pool_args = {
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_timeout": 30,
+        "pool_pre_ping": True,
+    }
+
 else:
     # SQLite
     connect_args = {"check_same_thread": False}
@@ -31,6 +37,7 @@ engine = create_async_engine(
     echo=False,
     future=True,
     connect_args=connect_args,
+    echo_pool=True,   # 🔥 ADD THIS
     **pool_args,
 )
 
@@ -46,7 +53,11 @@ AsyncSessionLocal = sessionmaker(
 # DB dependency
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.close()
+
 
 # Foreign key enforcement for SQLite
 if DB_TYPE == "sqlite":

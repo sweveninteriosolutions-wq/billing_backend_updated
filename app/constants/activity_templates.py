@@ -108,5 +108,34 @@ ACTIVITY_TEMPLATES = {
     "{actor_role} ({actor_email}) cancelled quotation {target_name}",
     ActivityCode.EXPIRE_QUOTATION:
     "{actor_role} ({actor_email}) expired quotation {target_name}: {changes}",
+
+    # ---------------- INVOICES ----------------
+    ActivityCode.CREATE_INVOICE:
+        "{actor_role} ({actor_email}) created invoice {target_name}",
+
+    ActivityCode.UPDATE_INVOICE:
+        "{actor_role} ({actor_email}) updated invoice {target_name}",
+
+    ActivityCode.APPLY_DISCOUNT:
+        "{actor_role} ({actor_email}) applied discount ₹{new_value} on invoice {target_name}",
+
+    ActivityCode.OVERRIDE_DISCOUNT:
+        "{actor_role} ({actor_email}) overrode discount on invoice {target_name} "
+        "(old ₹{old_value}, new ₹{new_value})",
+
+    ActivityCode.VERIFY_INVOICE:
+        "{actor_role} ({actor_email}) verified invoice {target_name}",
+
+    ActivityCode.PARTIAL_PAYMENT:
+        "Invoice {target_name} received partial payment of ₹{amount}",
+
+    ActivityCode.MARK_PAID:
+        "Invoice {target_name} marked as fully paid",
+
+    ActivityCode.FULFILL_INVOICE:
+        "Invoice {target_name} fulfilled; inventory deducted and loyalty awarded",
+
+    ActivityCode.CANCEL_INVOICE:
+        "{actor_role} ({actor_email}) cancelled invoice {target_name}",
 }
 

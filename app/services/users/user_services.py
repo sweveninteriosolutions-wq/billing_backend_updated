@@ -20,7 +20,6 @@ ALLOWED_ROLES = {"admin", "cashier", "sales", "inventory"}
 # =========================
 # INTERNAL MAPPER
 # =========================
-
 def _map_user(user: User) -> UserTableSchema:
     return UserTableSchema(
         id=user.id,
@@ -37,7 +36,6 @@ def _map_user(user: User) -> UserTableSchema:
 # =========================
 # CREATE USER
 # =========================
-
 async def create_user(
     db: AsyncSession,
     payload: UserCreateSchema,
@@ -60,19 +58,21 @@ async def create_user(
     )
 
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
 
+    # 🔔 activity BEFORE commit
     await emit_activity(
-        db,
+        db=db,
         user_id=admin_user.id,
         username=admin_user.username,
         code=ActivityCode.CREATE_USER,
         actor_role=admin_user.role.capitalize(),
         actor_email=admin_user.username,
-        target_email=user.username,
-        target_role=user.role.capitalize(),
+        target_email=payload.email,
+        target_role=payload.role.capitalize(),
     )
+
+    await db.commit()
+    await db.refresh(user)
 
     return _map_user(user)
 
@@ -80,7 +80,6 @@ async def create_user(
 # =========================
 # LIST USERS
 # =========================
-
 async def list_users(db: AsyncSession):
     result = await db.execute(
         select(User).order_by(User.created_at.desc())
@@ -91,7 +90,6 @@ async def list_users(db: AsyncSession):
 # =========================
 # UPDATE USER (OPTIMISTIC)
 # =========================
-
 async def update_user(
     db: AsyncSession,
     user_id: int,
@@ -156,13 +154,12 @@ async def update_user(
             detail="User was modified by another process",
         )
 
-    await db.commit()
-
-    # ---- Activity logs ----
-
+    # -----------------------------
+    # ACTIVITY LOGS (BEFORE COMMIT)
+    # -----------------------------
     if "username" in values:
         await emit_activity(
-            db,
+            db=db,
             user_id=admin_user.id,
             username=admin_user.username,
             code=ActivityCode.UPDATE_USER_EMAIL,
@@ -174,7 +171,7 @@ async def update_user(
 
     if "password_hash" in values:
         await emit_activity(
-            db,
+            db=db,
             user_id=admin_user.id,
             username=admin_user.username,
             code=ActivityCode.UPDATE_USER_PASSWORD,
@@ -185,7 +182,7 @@ async def update_user(
 
     if "role" in values:
         await emit_activity(
-            db,
+            db=db,
             user_id=admin_user.id,
             username=admin_user.username,
             code=ActivityCode.UPDATE_USER_ROLE,
@@ -198,7 +195,7 @@ async def update_user(
 
     if prev_active and not updated_user.is_active:
         await emit_activity(
-            db,
+            db=db,
             user_id=admin_user.id,
             username=admin_user.username,
             code=ActivityCode.DEACTIVATE_USER,
@@ -209,7 +206,7 @@ async def update_user(
 
     if not prev_active and updated_user.is_active:
         await emit_activity(
-            db,
+            db=db,
             user_id=admin_user.id,
             username=admin_user.username,
             code=ActivityCode.REACTIVATE_USER,
@@ -218,18 +215,26 @@ async def update_user(
             target_email=updated_user.username,
         )
 
+    # ✅ SINGLE COMMIT
+    await db.commit()
+
     return _map_user(updated_user)
 
 
 # =========================
 # DASHBOARD
 # =========================
-
 async def get_user_dashboard_stats(db: AsyncSession):
     total = await db.scalar(select(func.count()).select_from(User))
-    active = await db.scalar(select(func.count()).where(User.is_active.is_(True)))
-    admins = await db.scalar(select(func.count()).where(User.role == "admin"))
-    online = await db.scalar(select(func.count()).where(User.is_online.is_(True)))
+    active = await db.scalar(
+        select(func.count()).where(User.is_active.is_(True))
+    )
+    admins = await db.scalar(
+        select(func.count()).where(User.role == "admin")
+    )
+    online = await db.scalar(
+        select(func.count()).where(User.is_online.is_(True))
+    )
 
     return UserDashboardStatsSchema(
         total_users=total or 0,
