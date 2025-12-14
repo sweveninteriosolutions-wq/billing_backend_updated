@@ -88,7 +88,7 @@ async def list_loyalty_tokens(
     sort_col = sort_map.get(sort_by, LoyaltyToken.created_at)
 
     query = base_query.order_by(
-        asc(sort_col) if order == "asc" else desc(sort_col)
+        asc(sort_col) if order.lower() == "asc" else desc(sort_col)
     )
 
     # ---- PAGINATION ----
