@@ -56,6 +56,7 @@ class InvoiceOut(ORMBase):
     status: InvoiceStatus
 
     gross_amount: Decimal
+    tax_amount: Decimal
     discount_amount: Decimal
     net_amount: Decimal
     total_paid: Decimal

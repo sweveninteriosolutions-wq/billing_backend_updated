@@ -17,12 +17,14 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)
 
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
-    quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=True)
+    quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=True, index=True)
 
     status = Column(Enum(InvoiceStatus), nullable=False, default=InvoiceStatus.draft)
     version = Column(Integer, nullable=False, default=1)
 
     gross_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
+    tax_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"),)
+    
     discount_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
     net_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
 
@@ -54,8 +56,8 @@ class InvoiceItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     __tablename__ = "invoice_items"
 
     id = Column(Integer, primary_key=True)
-    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
 
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)

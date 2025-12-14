@@ -6,6 +6,12 @@ from app.routers import (user_router, auth_router, activity_router, customer_rou
                          invoice_router)
 from app.core.db import Base, engine, init_models
 from app.core.scheduler import scheduler
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,  
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 app = FastAPI(
     title="Backend Billing API",

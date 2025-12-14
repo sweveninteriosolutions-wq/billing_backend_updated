@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import noload, selectinload
 from fastapi import HTTPException
 from decimal import Decimal
 from uuid import uuid4
@@ -35,31 +35,61 @@ from app.services.inventory.inventory_movement_service import apply_inventory_mo
 # =====================================================
 # CREATE INVOICE
 # =====================================================
+from decimal import Decimal
+from uuid import uuid4
+from sqlalchemy import select
+from sqlalchemy.orm import noload
+from fastapi import HTTPException
+
+from app.models.billing.invoice_models import Invoice, InvoiceItem
+from app.models.billing.quotation_models import Quotation
+from app.models.masters.customer_models import Customer
+from app.models.enums.invoice_status import InvoiceStatus
+from app.models.enums.quotation_status import QuotationStatus
+from app.constants.activity_codes import ActivityCode
+from app.utils.activity_helpers import emit_activity
+
+GST_RATE = Decimal("0.18")  # move to env if needed
+
 async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user):
 
     # ----------------------------------
     # 1. Validate customer & snapshot
     # ----------------------------------
-    customer = await db.get(Customer, payload.customer_id)
+    result = await db.execute(
+        select(Customer)
+        .options(noload("*"))   # 🔥 THIS IS THE FIX
+        .where(
+            Customer.id == payload.customer_id,
+            Customer.is_active.is_(True),
+        )
+    )
+    customer = result.scalar_one_or_none()
     if not customer or not customer.is_active:
         raise HTTPException(404, "Customer not found or inactive")
 
     # ----------------------------------
-    # 2. Validate & lock quotation (if any)
+    # 2. Validate & lock quotation (OPTIONAL, SAFE)
     # ----------------------------------
     quotation = None
     if payload.quotation_id:
-        result = await db.execute(
-            select(Quotation)
-            .options(noload("*"))
-            .where(
-                Quotation.id == payload.quotation_id,
-                Quotation.is_deleted == False,
+        try:
+            result = await db.execute(
+                select(Quotation)
+                .options(noload("*"))
+                .where(
+                    Quotation.id == payload.quotation_id,
+                    Quotation.is_deleted.is_(False),
+                )
+                .with_for_update(nowait=True)
             )
-            .with_for_update(of=Quotation)
-        )
-        quotation = result.scalar_one_or_none()
+        except Exception:
+            raise HTTPException(
+                status_code=409,
+                detail="Quotation is being processed by another request",
+            )
 
+        quotation = result.scalar_one_or_none()
         if not quotation:
             raise HTTPException(404, "Quotation not found")
 
@@ -73,7 +103,37 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user):
             )
 
     # ----------------------------------
-    # 3. Create invoice with SNAPSHOT
+    # 3. Build items + gross
+    # ----------------------------------
+    gross = Decimal("0.00")
+    invoice_items: list[InvoiceItem] = []
+
+    for item in payload.items:
+        line_total = item.unit_price * item.quantity
+        gross += line_total
+
+        invoice_items.append(
+            InvoiceItem(
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                line_total=line_total,
+                created_by_id=user.id,
+                updated_by_id=user.id,
+            )
+        )
+
+    if gross <= 0:
+        raise HTTPException(400, "Invoice total must be greater than zero")
+
+    # ----------------------------------
+    # 4. TAX — ALWAYS FROM GROSS (MANUAL INVOICE)
+    # ----------------------------------
+    tax_amount = (gross * GST_RATE).quantize(Decimal("0.01"))
+    net_amount = gross + tax_amount
+
+    # ----------------------------------
+    # 5. Create invoice (SOURCE OF TRUTH)
     # ----------------------------------
     invoice = Invoice(
         invoice_number=f"INV-{uuid4().hex[:10].upper()}",
@@ -86,37 +146,34 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user):
             "phone": customer.phone,
             "address": customer.address,
         },
+        gross_amount=gross,
+        tax_amount=tax_amount,
+        net_amount=net_amount,
+        balance_due=net_amount,
         status=InvoiceStatus.draft,
         created_by_id=user.id,
         updated_by_id=user.id,
     )
 
-    gross = Decimal("0.00")
-    for item in payload.items:
-        line_total = item.unit_price * item.quantity
-        gross += line_total
-
-        invoice.items.append(
-            InvoiceItem(
-                product_id=item.product_id,
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                line_total=line_total,
-                created_by_id=user.id,
-                updated_by_id=user.id,
-            )
-        )
-
-    invoice.gross_amount = gross
-    invoice.net_amount = gross
-    invoice.balance_due = gross
-
+    invoice.items.extend(invoice_items)
     db.add(invoice)
 
+    # ----------------------------------
+    # 6. Mark quotation invoiced
+    # ----------------------------------
     if quotation:
         quotation.status = QuotationStatus.invoiced
         quotation.updated_by_id = user.id
 
+    # ----------------------------------
+    # 7. COMMIT (FAST)
+    # ----------------------------------
+    # await db.commit()
+    # await db.refresh(invoice)
+
+    # ----------------------------------
+    # 8. Activity log (POST-COMMIT)
+    # ----------------------------------
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -130,13 +187,10 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user):
     await db.commit()
 
     await db.refresh(invoice)
-    await db.refresh(invoice, attribute_names=["items", "payments"])
-
     return InvoiceResponse(
         message="Invoice created",
         data=InvoiceOut.model_validate(invoice),
     )
-
 
 
 # =====================================================
@@ -514,8 +568,8 @@ async def override_invoice_discount(db: AsyncSession, invoice_id: int, payload: 
 
     old_discount = invoice.discount_amount
 
-    invoice.discount_amount = payload.new_discount_amount
-    invoice.net_amount = invoice.gross_amount - payload.new_discount_amount
+    invoice.discount_amount = payload.discount_amount
+    invoice.net_amount = invoice.gross_amount - payload.discount_amount
     invoice.balance_due = invoice.net_amount - invoice.total_paid
     invoice.version += 1
     invoice.updated_by_id = user.id
@@ -529,7 +583,7 @@ async def override_invoice_discount(db: AsyncSession, invoice_id: int, payload: 
         actor_email=user.username,
         target_name=invoice.invoice_number,
         old_value=str(old_discount),
-        new_value=str(payload.new_discount_amount),
+        new_value=str(payload.discount_amount),
         reason=payload.reason,
     )
 
