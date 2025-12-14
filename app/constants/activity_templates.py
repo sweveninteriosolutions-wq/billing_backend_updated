@@ -137,5 +137,16 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.CANCEL_INVOICE:
         "{actor_role} ({actor_email}) cancelled invoice {target_name}",
+    
+    # ---------------- DISCOUNTS ----------------
+    ActivityCode.CREATE_DISCOUNT:
+        "{actor_role} ({actor_email}) created discount {target_name} ({target_code})",
+    ActivityCode.UPDATE_DISCOUNT:
+        "{actor_role} ({actor_email}) updated discount {target_name} ({target_code}): {changes}",
+    ActivityCode.DEACTIVATE_DISCOUNT:
+        "{actor_role} ({actor_email}) deactivated discount {target_name} ({target_code})",
+    ActivityCode.REACTIVATE_DISCOUNT:
+        "{actor_role} ({actor_email}) reactivated discount {target_name} ({target_code})",
+    
 }
 

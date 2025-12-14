@@ -1,5 +1,3 @@
-# app/models/discount_models.py
-
 from sqlalchemy import (
     Column,
     Integer,
@@ -7,7 +5,8 @@ from sqlalchemy import (
     Numeric,
     Date,
     Boolean,
-    Index
+    Index,
+    CheckConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -24,7 +23,7 @@ class Discount(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     code = Column(String(50), unique=True, nullable=False, index=True)
 
     discount_type = Column(String(20), nullable=False)  # percentage | flat
-    discount_value = Column(Numeric(10, 2), nullable=False)
+    discount_value = Column(Numeric(10, 2, asdecimal=True), nullable=False)
 
     is_active = Column(Boolean, default=True, nullable=False)
 
@@ -36,9 +35,12 @@ class Discount(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     note = Column(String(255), nullable=True)
 
-    invoices = relationship("Invoice", back_populates="discount", lazy="selectin")
 
     __table_args__ = (
+        CheckConstraint(
+            "discount_type IN ('percentage', 'flat')",
+            name="ck_discount_type",
+        ),
         Index("ix_discount_active", "is_active"),
     )
 

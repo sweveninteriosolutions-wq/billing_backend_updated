@@ -66,6 +66,7 @@ class InvoiceItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     invoice = relationship("Invoice", back_populates="items")
     product = relationship("Product", lazy="selectin")
 
+
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_invoice_item_qty"),
         CheckConstraint("unit_price >= 0", name="ck_invoice_item_price"),

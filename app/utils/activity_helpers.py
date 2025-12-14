@@ -16,7 +16,12 @@ async def emit_activity(
     if not template:
         raise ValueError(f"No activity template for code {code}")
 
-    message = template.format(**context)
+    try:
+        message = template.format(**context)
+    except KeyError as e:
+        raise ValueError(
+            f"Missing activity context key: {e.args[0]} for {code}"
+        )
 
     db.add(
         UserActivity(
