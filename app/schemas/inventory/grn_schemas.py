@@ -15,6 +15,7 @@ class GRNItemTableSchema(BaseModel):
 
 class GRNCreateSchema(BaseModel):
     supplier_id: int
+    location_id: int
     purchase_order: Optional[str] = None
     bill_number: Optional[str] = None
     notes: Optional[str] = None
@@ -23,6 +24,7 @@ class GRNCreateSchema(BaseModel):
 class GRNTableSchema(BaseModel):
     id: int
     supplier_id: Optional[int]
+    location_id: int
 
     purchase_order: Optional[str]
     bill_number: Optional[str]
@@ -58,6 +60,7 @@ class GRNItemUpdateSchema(BaseModel):
 
 class GRNUpdateSchema(BaseModel):
     supplier_id: Optional[int] = None
+    location_id: Optional[int] = None
     purchase_order: Optional[str] = None
     bill_number: Optional[str] = None
     notes: Optional[str] = None

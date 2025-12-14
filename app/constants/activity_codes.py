@@ -45,4 +45,3 @@ class ActivityCode(str, Enum):
     UPDATE_GRN = "UPDATE_GRN"
     VERIFY_GRN = "VERIFY_GRN"
     DELETE_GRN = "DELETE_GRN"
-    

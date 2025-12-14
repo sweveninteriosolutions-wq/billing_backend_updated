@@ -21,6 +21,7 @@ class GRN(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     id = Column(Integer, primary_key=True)
 
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
+    location_id = Column(Integer, ForeignKey("inventory_locations.id"), nullable=False, index=True)
 
     purchase_order = Column(String(100), nullable=True)
     bill_number = Column(String(100), nullable=True)
