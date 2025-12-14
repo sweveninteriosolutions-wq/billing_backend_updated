@@ -107,9 +107,6 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.CANCEL_QUOTATION:
     "{actor_role} ({actor_email}) cancelled quotation {target_name}",
     ActivityCode.EXPIRE_QUOTATION:
-    "{actor_role} ({actor_email}) expired quotation {target_name}",
-
-    
-
+    "{actor_role} ({actor_email}) expired quotation {target_name}: {changes}",
 }
 

@@ -47,7 +47,11 @@ class Quotation(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     notes = Column(String, nullable=True)
     additional_data = Column(JSON, nullable=True)
 
-    customer = relationship("Customer", lazy="joined")
+    customer = relationship(
+        "Customer",
+        back_populates="quotations",
+        lazy="joined",
+    )
     items = relationship(
         "QuotationItem",
         back_populates="quotation",
@@ -83,14 +87,14 @@ class QuotationItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
         nullable=False
     )
 
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
 
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
     line_total = Column(Numeric(14, 2), nullable=False)
 
-    quotation = relationship("Quotation", back_populates="items")
+    quotation = relationship("Quotation", back_populates="items", lazy="joined")
 
     product = relationship("Product", lazy="joined")
 

@@ -44,7 +44,4 @@ app.include_router(quotation_router)
 @app.on_event("startup")
 async def on_startup():
     await init_models()
-
-@app.on_event("startup")
-async def start_scheduler():
     scheduler.start()
