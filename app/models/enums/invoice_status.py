@@ -1,9 +1,9 @@
-# app/models/enums/invoice_status.py
-import enum
+from enum import Enum
 
-class InvoiceStatus(str, enum.Enum):
+class InvoiceStatus(str, Enum):
     draft = "draft"
-    issued = "issued"              # inventory deducted here
+    verified = "verified"
     partially_paid = "partially_paid"
     paid = "paid"
+    fulfilled = "fulfilled"
     cancelled = "cancelled"

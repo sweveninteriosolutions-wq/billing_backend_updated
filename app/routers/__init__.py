@@ -14,6 +14,7 @@ from .inventory.inventory_location_router import router as inventory_location_ro
 from .inventory.grn_router import router as grn_router
 
 from .billing.quotation_router import router as quotation_router
+from .billing.invoice_router import router as invoice_router
 
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
 "grn_router",
 
 "quotation_router",
+"invoice_router",
 
 ]

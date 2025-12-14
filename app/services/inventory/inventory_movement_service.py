@@ -117,6 +117,8 @@ async def apply_inventory_movement(
         balance.quantity = new_quantity
         balance.updated_by_id = actor_user.id
 
+        await db.flush() 
+
         # ------------------------------------
         # 6. Activity log (NO COMMIT HERE)
         # ------------------------------------

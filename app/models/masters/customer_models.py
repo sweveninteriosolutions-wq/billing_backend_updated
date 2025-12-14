@@ -29,10 +29,9 @@ class Customer(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     version = Column(Integer, nullable=False, default=1)
     
     quotations = relationship("Quotation", back_populates="customer", lazy="selectin")
-    # sales_orders = relationship("SalesOrder", back_populates="customer", lazy="selectin")
-    # invoices = relationship("Invoice", back_populates="customer", lazy="selectin")
-    # payments = relationship("Payment", back_populates="customer", lazy="selectin")
-    # loyalty_tokens = relationship("LoyaltyToken", back_populates="customer", lazy="selectin")
+    invoices = relationship("Invoice", back_populates="customer", lazy="selectin")
+
+    loyalty_tokens = relationship("LoyaltyToken", back_populates="customer", lazy="selectin")
     # complaints = relationship("Complaint", back_populates="customer", lazy="selectin")
 
     __table_args__ = (

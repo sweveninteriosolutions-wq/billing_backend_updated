@@ -152,3 +152,36 @@ async def convert_quotation_to_invoice_api(
         version,
         current_user,
     )
+
+@router.post("/ready_for_invoice", response_model=QuotationListResponse)
+async def list_quotations_ready_for_invoice_api(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(
+        require_role(["admin", "sales", "cashier"])
+    ),
+
+    # -------- Pagination --------
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+
+    # -------- Sorting --------
+    sort_by: str = Query(
+        "created_at",
+        description="created_at | quotation_number",
+    ),
+    order: str = Query(
+        "desc",
+        description="asc | desc",
+    ),
+):
+    """
+    List quotations ready to be converted to invoice with pagination.
+    """
+    return await list_quotations(
+        db=db,
+        status="converted_to_invoice",
+        limit=page_size,
+        offset=(page - 1) * page_size,
+        sort_by=sort_by,
+        order=order,
+    )

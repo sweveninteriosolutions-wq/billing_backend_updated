@@ -1,12 +1,12 @@
 from decimal import Decimal
 import hashlib
+import os
 from typing import List, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, noload
 from fastapi import HTTPException
-from sqlalchemy.orm import noload
 
 from app.models.billing.quotation_models import Quotation, QuotationItem
 from app.models.masters.customer_models import Customer
@@ -23,19 +23,17 @@ from app.schemas.billing.quotation_schemas import (
 )
 
 from app.utils.activity_helpers import emit_activity
-import os
 from app.constants.activity_codes import ActivityCode
 
 
 GST_RATE = Decimal(
-    os.getenv("GST_RATE", "0.18")  
+    os.getenv("GST_RATE", "0.18")
 )
 
 
 # =====================================================
 # SIGNATURE (DEDUP)
 # =====================================================
-
 def generate_item_signature(items: List[tuple[int, int]]) -> str:
     """
     items = [(product_id, quantity), ...]
@@ -49,7 +47,6 @@ def generate_item_signature(items: List[tuple[int, int]]) -> str:
 # =====================================================
 # INTERNAL HELPERS
 # =====================================================
-
 async def _get_quotation_with_items(
     db: AsyncSession,
     quotation_id: int,
@@ -59,7 +56,7 @@ async def _get_quotation_with_items(
         .options(
             selectinload(Quotation.items),
             selectinload(Quotation.customer),  # 👈 IMPORTANT
-            # selectinload(Quotation.created_by),   # 👈 User relationship
+            # selectinload(Quotation.created_by),
             # selectinload(Quotation.updated_by),
         )
         .where(
@@ -72,23 +69,30 @@ async def _get_quotation_with_items(
         raise HTTPException(404, "Quotation not found")
     return quotation
 
+
 async def _get_quotation_for_update(
     db: AsyncSession,
     quotation_id: int,
 ) -> Quotation:
+    """
+    Fetch quotation WITH ROW LOCK.
+    Use ONLY for critical state transitions.
+    """
     result = await db.execute(
         select(Quotation)
+        .options(selectinload(Quotation.items))
+        .options(
+            noload("*")  # 🔒 ABSOLUTE GUARANTEE: NO JOINS
+        )
         .where(
             Quotation.id == quotation_id,
             Quotation.is_deleted == False,
         )
         .with_for_update()
     )
-
     quotation = result.scalar_one_or_none()
     if not quotation:
         raise HTTPException(404, "Quotation not found")
-
     return quotation
 
 
@@ -131,31 +135,6 @@ async def recalculate_totals(quotation: Quotation) -> None:
     quotation.tax_amount = subtotal * GST_RATE
     quotation.total_amount = subtotal + quotation.tax_amount
 
-async def _get_quotation_for_update(
-    db: AsyncSession,
-    quotation_id: int,
-) -> Quotation:
-    """
-    Fetch quotation WITH ROW LOCK.
-    Use ONLY for critical state transitions.
-    """
-    result = await db.execute(
-        select(Quotation)
-        .options(selectinload(Quotation.items))
-        .options(
-            noload("*")  # 🔒 ABSOLUTE GUARANTEE: NO JOINS
-        )
-        .where(
-            Quotation.id == quotation_id,
-            Quotation.is_deleted == False,
-        )
-        .with_for_update()
-    )
-    quotation = result.scalar_one_or_none()
-    if not quotation:
-        raise HTTPException(404, "Quotation not found")
-    return quotation
-
 
 def _map_quotation(q: Quotation) -> QuotationOut:
     return QuotationOut(
@@ -191,7 +170,8 @@ def _map_quotation(q: Quotation) -> QuotationOut:
                 unit_price=i.unit_price,
                 line_total=i.line_total,
             )
-            for i in q.items if not i.is_deleted
+            for i in q.items
+            if not i.is_deleted
         ],
     )
 
@@ -199,7 +179,6 @@ def _map_quotation(q: Quotation) -> QuotationOut:
 # =====================================================
 # CREATE QUOTATION
 # =====================================================
-
 async def create_quotation(
     db: AsyncSession,
     payload: QuotationCreate,
@@ -211,7 +190,8 @@ async def create_quotation(
         raise HTTPException(404, "Customer not found")
 
     items_for_signature = [
-        (i.product_id, i.quantity) for i in payload.items
+        (i.product_id, i.quantity)
+        for i in payload.items
     ]
     signature = generate_item_signature(items_for_signature)
 
@@ -243,6 +223,7 @@ async def create_quotation(
 
     db.add(quotation)
     await db.flush()
+
     quotation.quotation_number = f"QT-{quotation.id:06d}"
 
     products_map = await _fetch_products_map(db, payload.items)
@@ -263,10 +244,9 @@ async def create_quotation(
             )
         )
 
-
     await db.flush()
-    subtotal = Decimal("0.00")
 
+    subtotal = Decimal("0.00")
     for item in payload.items:
         product = products_map[item.product_id]
         subtotal += product.price * item.quantity
@@ -274,7 +254,6 @@ async def create_quotation(
     quotation.subtotal_amount = subtotal
     quotation.tax_amount = subtotal * GST_RATE
     quotation.total_amount = subtotal + quotation.tax_amount
-
 
     await emit_activity(
         db=db,
@@ -288,10 +267,8 @@ async def create_quotation(
 
     await db.commit()
 
-    # SAFE refetch
     quotation = await _get_quotation_with_items(db, quotation.id)
 
-    # SAFE mapping (NO lazy props)
     return QuotationResponse(
         message="Quotation created successfully",
         data=_map_quotation(quotation),
@@ -301,27 +278,28 @@ async def create_quotation(
 # =====================================================
 # GET ONE
 # =====================================================
-
 async def get_quotation(
     db: AsyncSession,
     quotation_id: int,
 ) -> QuotationResponse:
     quotation = await _get_quotation_with_items(db, quotation_id)
-    return QuotationResponse(message="Quotation retrieved successfully", data=_map_quotation(quotation))
+    return QuotationResponse(
+        message="Quotation retrieved successfully",
+        data=_map_quotation(quotation),
+    )
 
 
 # =====================================================
 # LIST
 # =====================================================
-
 async def list_quotations(
     db: AsyncSession,
-    customer_id: int | None,
-    status: str | None,
-    limit: int,
-    offset: int,
-    sort_by: str,
-    order: str,
+    customer_id: int | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    order: str = "desc",
 ) -> QuotationListResponse:
 
     query = select(Quotation).where(Quotation.is_deleted == False)
@@ -336,9 +314,14 @@ async def list_quotations(
         "quotation_number": Quotation.quotation_number,
     }
     sort_col = sort_map.get(sort_by, Quotation.created_at)
-    query = query.order_by(asc(sort_col) if order == "asc" else desc(sort_col))
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    query = query.order_by(
+        asc(sort_col) if order == "asc" else desc(sort_col)
+    )
+
+    total = await db.scalar(
+        select(func.count()).select_from(query.subquery())
+    )
 
     result = await db.execute(
         query.options(selectinload(Quotation.items))
@@ -358,7 +341,6 @@ async def list_quotations(
 # =====================================================
 # UPDATE (DRAFT ONLY)
 # =====================================================
-
 async def update_quotation(
     db: AsyncSession,
     quotation_id: int,
@@ -433,13 +415,15 @@ async def update_quotation(
         changes=", ".join(changes) if changes else "no changes",
     )
 
-    return QuotationResponse(message="Quotation updated successfully", data=_map_quotation(quotation))
+    return QuotationResponse(
+        message="Quotation updated successfully",
+        data=_map_quotation(quotation),
+    )
 
 
 # =====================================================
 # APPROVE
 # =====================================================
-
 async def approve_quotation(
     db: AsyncSession,
     quotation_id: int,
@@ -470,6 +454,7 @@ async def approve_quotation(
         raise HTTPException(409, "Quotation cannot be approved")
 
     await db.commit()
+
     quotation = await _get_quotation_with_items(db, approved_id)
 
     await emit_activity(
@@ -482,13 +467,15 @@ async def approve_quotation(
         target_name=quotation.quotation_number,
     )
 
-    return QuotationResponse(message="Quotation approved successfully", data=_map_quotation(quotation))
+    return QuotationResponse(
+        message="Quotation approved successfully",
+        data=_map_quotation(quotation),
+    )
 
 
 # =====================================================
 # DELETE (DRAFT ONLY)
 # =====================================================
-
 async def delete_quotation(
     db: AsyncSession,
     quotation_id: int,
@@ -519,6 +506,7 @@ async def delete_quotation(
         raise HTTPException(409, "Only draft quotations can be deleted")
 
     await db.commit()
+
     quotation = await _get_quotation_with_items(db, deleted_id)
 
     await emit_activity(
@@ -531,7 +519,10 @@ async def delete_quotation(
         target_name=quotation.quotation_number,
     )
 
-    return QuotationResponse(message="Quotation deleted successfully", data=_map_quotation(quotation))
+    return QuotationResponse(
+        message="Quotation deleted successfully",
+        data=_map_quotation(quotation),
+    )
 
 
 # =====================================================
@@ -545,16 +536,14 @@ async def convert_quotation_to_invoice(
 ) -> QuotationResponse:
 
     try:
-        # 1️⃣ LOCK ONLY THE QUOTATION ROW
         quotation = await _get_quotation_for_update(db, quotation_id)
 
-        # 2️⃣ VALIDATION
         if quotation.status != QuotationStatus.approved:
             raise HTTPException(
                 status_code=409,
                 detail="Only approved quotations can be converted to invoice",
             )
-        
+
         if quotation.status == QuotationStatus.converted_to_invoice:
             raise HTTPException(
                 status_code=409,
@@ -567,7 +556,6 @@ async def convert_quotation_to_invoice(
                 detail="Quotation modified by another process",
             )
 
-        # 3️⃣ STATE TRANSITION
         quotation.status = QuotationStatus.converted_to_invoice
         quotation.version += 1
         quotation.updated_by_id = user.id
@@ -578,10 +566,8 @@ async def convert_quotation_to_invoice(
         await db.rollback()
         raise
 
-    # 4️⃣ FETCH FULL DATA (NO LOCK)
     quotation = await _get_quotation_with_items(db, quotation_id)
 
-    # 5️⃣ ACTIVITY
     await emit_activity(
         db=db,
         user_id=user.id,
