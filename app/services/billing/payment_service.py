@@ -1,9 +1,10 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, asc, desc
-from fastapi import HTTPException
 from datetime import date
 from decimal import Decimal
-from sqlalchemy.orm import noload, selectinload
+
+from fastapi import HTTPException
+from sqlalchemy import select, func, asc, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from app.models.billing.payment_models import Payment
 from app.models.billing.invoice_models import Invoice
@@ -31,21 +32,18 @@ async def get_payment(
 
     result = await db.execute(
         select(Payment)
-        .options(
-            noload("*")  # 🔥 disable all relationships
-        )
+        .options(noload("*"))
         .where(Payment.id == payment_id)
     )
 
     payment = result.scalar_one_or_none()
     if not payment:
-        raise HTTPException(404, "Payment not found")
+        raise HTTPException(status_code=404, detail="Payment not found")
 
     return PaymentResponse(
         message="Payment retrieved successfully",
         data=_map_payment(payment),
     )
-
 
 
 # =====================================================
@@ -54,109 +52,79 @@ async def get_payment(
 async def list_payments(
     db: AsyncSession,
     *,
-    invoice_id: int | None,
-    customer_id: int | None,
-    payment_method: str | None,
-    min_amount: Decimal | None,
-    max_amount: Decimal | None,
-    start_date: date | None,
-    end_date: date | None,
-    page: int,
-    page_size: int,
-    sort_by: str,
-    order: str,
+    invoice_id: int | None = None,
+    customer_id: int | None = None,
+    payment_method: str | None = None,
+    min_amount: Decimal | None = None,
+    max_amount: Decimal | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str = "created_at",
+    order: str = "desc",
 ) -> PaymentListResponse:
 
-    query = (
+    # -------------------------------
+    # BASE QUERY (NO ORDER BY)
+    # -------------------------------
+    base_query = (
         select(Payment)
-        .options(
-            noload("*")  # 🔥 prevent relationship loading
-        )
+        .options(noload("*"))
         .join(Invoice, Payment.invoice_id == Invoice.id)
     )
 
     if invoice_id:
-        query = query.where(Payment.invoice_id == invoice_id)
+        base_query = base_query.where(Payment.invoice_id == invoice_id)
 
     if customer_id:
-        query = query.where(Invoice.customer_id == customer_id)
+        base_query = base_query.where(Invoice.customer_id == customer_id)
 
     if payment_method:
-        query = query.where(Payment.payment_method == payment_method)
+        base_query = base_query.where(Payment.payment_method == payment_method)
 
     if min_amount is not None:
-        query = query.where(Payment.amount >= min_amount)
+        base_query = base_query.where(Payment.amount >= min_amount)
 
     if max_amount is not None:
-        query = query.where(Payment.amount <= max_amount)
+        base_query = base_query.where(Payment.amount <= max_amount)
 
     if start_date:
-        query = query.where(Payment.created_at >= start_date)
+        base_query = base_query.where(Payment.created_at >= start_date)
 
     if end_date:
-        query = query.where(Payment.created_at <= end_date)
+        base_query = base_query.where(Payment.created_at <= end_date)
 
+    # -------------------------------
+    # TOTAL COUNT (NO SORT)
+    # -------------------------------
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    # -------------------------------
+    # SORT + PAGINATION
+    # -------------------------------
     sort_map = {
         "created_at": Payment.created_at,
         "amount": Payment.amount,
     }
     sort_col = sort_map.get(sort_by, Payment.created_at)
 
-    query = query.order_by(
-        asc(sort_col) if order == "asc" else desc(sort_col)
+    paged_query = (
+        base_query
+        .order_by(
+            asc(sort_col) if order == "asc" else desc(sort_col)
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
 
-    total = await db.scalar(
-        select(func.count()).select_from(query.subquery())
-    )
-
-    result = await db.execute(
-        query.offset((page - 1) * page_size).limit(page_size)
-    )
-
+    result = await db.execute(paged_query)
     payments = result.scalars().all()
 
     return PaymentListResponse(
         message="Payments retrieved successfully",
-        total=total or 0,
-        data=[_map_payment(p) for p in payments],
-    )
-
-
-
-# =====================================================
-# LIST PAYMENTS BY CUSTOMER (DEDICATED)
-# =====================================================
-async def list_payments_by_customer(
-    db: AsyncSession,
-    customer_id: int,
-    *,
-    page: int,
-    page_size: int,
-) -> PaymentListResponse:
-
-    query = (
-        select(Payment)
-        .options(
-            noload("*")  # 🔥 critical
-        )
-        .join(Invoice, Payment.invoice_id == Invoice.id)
-        .where(Invoice.customer_id == customer_id)
-        .order_by(Payment.created_at.desc())
-    )
-
-    total = await db.scalar(
-        select(func.count()).select_from(query.subquery())
-    )
-
-    result = await db.execute(
-        query.offset((page - 1) * page_size).limit(page_size)
-    )
-
-    payments = result.scalars().all()
-
-    return PaymentListResponse(
-        message="Customer payments retrieved successfully",
         total=total or 0,
         data=[_map_payment(p) for p in payments],
     )
