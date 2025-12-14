@@ -85,10 +85,6 @@ async def get_discount(db: AsyncSession, discount_id: int):
     if not discount or discount.is_deleted:
         raise HTTPException(404, "Discount not found")
 
-    if discount.is_active and discount.end_date < date.today():
-        discount.is_active = False
-        await db.commit()
-
     return DiscountResponse(
         message="Discount retrieved successfully",
         data=_map_discount(discount),
@@ -185,32 +181,38 @@ async def update_discount(db: AsyncSession, discount_id: int, payload: DiscountU
 
 
 # ---------------- DEACTIVATE ----------------
-async def deactivate_discount(db: AsyncSession, discount_id: int, user):
+async def deactivate_discount(
+    db: AsyncSession,
+    discount_id: int,
+    current_user,
+) -> DiscountResponse:
+
     discount = await db.get(Discount, discount_id)
     if not discount or discount.is_deleted:
         raise HTTPException(404, "Discount not found")
 
-    discount.is_active = False
     discount.is_deleted = True
-    discount.updated_by_id = user.id
+    discount.updated_by_id = current_user.id
 
     await emit_activity(
         db=db,
-        user_id=user.id,
-        username=user.username,
+        user_id=current_user.id,
+        username=current_user.username,
         code=ActivityCode.DEACTIVATE_DISCOUNT,
-        actor_role=user.role.capitalize(),
-        actor_email=user.username,
+        actor_role=current_user.role.capitalize(),
+        actor_email=current_user.username,
         target_name=discount.name,
         target_code=discount.code,
     )
 
     await db.commit()
+    await db.refresh(discount)
 
     return DiscountResponse(
-        message="Discount deactivated successfully",
+        message="Discount deleted successfully",
         data=_map_discount(discount),
     )
+
 
 
 # ---------------- REACTIVATE ----------------
