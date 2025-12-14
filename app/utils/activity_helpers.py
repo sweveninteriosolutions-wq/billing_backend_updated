@@ -25,5 +25,3 @@ async def emit_activity(
             message=message,
         )
     )
-
-    await db.commit()

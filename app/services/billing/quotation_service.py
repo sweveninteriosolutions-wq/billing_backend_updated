@@ -26,22 +26,15 @@ from app.utils.activity_helpers import emit_activity
 from app.constants.activity_codes import ActivityCode
 
 
-GST_RATE = Decimal(
-    os.getenv("GST_RATE", "0.18")
-)
+GST_RATE = Decimal(os.getenv("GST_RATE", "0.18"))
 
 
 # =====================================================
 # SIGNATURE (DEDUP)
 # =====================================================
 def generate_item_signature(items: List[tuple[int, int]]) -> str:
-    """
-    items = [(product_id, quantity), ...]
-    Order independent
-    """
     normalized = sorted(f"{pid}:{qty}" for pid, qty in items)
-    raw = "|".join(normalized)
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hashlib.sha256("|".join(normalized).encode()).hexdigest()
 
 
 # =====================================================
@@ -55,13 +48,11 @@ async def _get_quotation_with_items(
         select(Quotation)
         .options(
             selectinload(Quotation.items),
-            selectinload(Quotation.customer),  # 👈 IMPORTANT
-            # selectinload(Quotation.created_by),
-            # selectinload(Quotation.updated_by),
+            selectinload(Quotation.customer),
         )
         .where(
             Quotation.id == quotation_id,
-            Quotation.is_deleted == False,
+            Quotation.is_deleted.is_(False),
         )
     )
     quotation = result.scalar_one_or_none()
@@ -75,18 +66,17 @@ async def _get_quotation_for_update(
     quotation_id: int,
 ) -> Quotation:
     """
-    Fetch quotation WITH ROW LOCK.
-    Use ONLY for critical state transitions.
+    LOCKED fetch – only for state transitions
     """
     result = await db.execute(
         select(Quotation)
-        .options(selectinload(Quotation.items))
         .options(
-            noload("*")  # 🔒 ABSOLUTE GUARANTEE: NO JOINS
+            selectinload(Quotation.items),
+            noload(Quotation.customer),
         )
         .where(
             Quotation.id == quotation_id,
-            Quotation.is_deleted == False,
+            Quotation.is_deleted.is_(False),
         )
         .with_for_update()
     )
@@ -100,33 +90,25 @@ async def _fetch_products_map(
     db: AsyncSession,
     items,
 ) -> Dict[int, Product]:
-    """
-    Bulk fetch products → avoids N+1 queries
-    """
     product_ids = {i.product_id for i in items}
 
     result = await db.execute(
         select(Product).where(
             Product.id.in_(product_ids),
-            Product.is_deleted == False,
+            Product.is_deleted.is_(False),
         )
     )
 
     products = {p.id: p for p in result.scalars()}
-
     if len(products) != len(product_ids):
         missing = product_ids - products.keys()
-        raise HTTPException(
-            status_code=404,
-            detail=f"Invalid product IDs: {list(missing)}",
-        )
+        raise HTTPException(404, f"Invalid product IDs: {list(missing)}")
 
     return products
 
 
 async def recalculate_totals(quotation: Quotation) -> None:
     subtotal = Decimal("0.00")
-
     for item in quotation.items:
         if not item.is_deleted:
             subtotal += item.line_total
@@ -142,25 +124,19 @@ def _map_quotation(q: Quotation) -> QuotationOut:
         quotation_number=q.quotation_number,
         customer_id=q.customer_id,
         status=q.status,
-
         subtotal_amount=q.subtotal_amount,
         tax_amount=q.tax_amount,
         total_amount=q.total_amount,
-
         valid_until=q.valid_until,
         description=q.description,
         notes=q.notes,
-
         version=q.version,
-
         created_by=q.created_by_id,
         updated_by=q.updated_by_id,
         created_by_name=q.created_by_username,
         updated_by_name=q.updated_by_username,
-
         created_at=q.created_at,
         updated_at=q.updated_at,
-
         items=[
             QuotationItemOut(
                 id=i.id,
@@ -189,24 +165,22 @@ async def create_quotation(
     if not customer or not customer.is_active:
         raise HTTPException(404, "Customer not found")
 
-    items_for_signature = [
-        (i.product_id, i.quantity)
-        for i in payload.items
-    ]
-    signature = generate_item_signature(items_for_signature)
+    signature = generate_item_signature(
+        [(i.product_id, i.quantity) for i in payload.items]
+    )
 
-    existing = await db.scalar(
+    exists_draft = await db.scalar(
         select(Quotation.id).where(
             Quotation.customer_id == payload.customer_id,
             Quotation.status == QuotationStatus.draft,
             Quotation.item_signature == signature,
-            Quotation.is_deleted == False,
+            Quotation.is_deleted.is_(False),
         )
     )
-    if existing:
+    if exists_draft:
         raise HTTPException(
-            status_code=409,
-            detail="A draft quotation with the same items already exists",
+            409,
+            "A draft quotation with the same items already exists",
         )
 
     quotation = Quotation(
@@ -230,7 +204,6 @@ async def create_quotation(
 
     for item in payload.items:
         product = products_map[item.product_id]
-
         db.add(
             QuotationItem(
                 quotation_id=quotation.id,
@@ -245,15 +218,7 @@ async def create_quotation(
         )
 
     await db.flush()
-
-    subtotal = Decimal("0.00")
-    for item in payload.items:
-        product = products_map[item.product_id]
-        subtotal += product.price * item.quantity
-
-    quotation.subtotal_amount = subtotal
-    quotation.tax_amount = subtotal * GST_RATE
-    quotation.total_amount = subtotal + quotation.tax_amount
+    await recalculate_totals(quotation)
 
     await emit_activity(
         db=db,
@@ -276,7 +241,7 @@ async def create_quotation(
 
 
 # =====================================================
-# GET ONE
+# GET QUOTATION
 # =====================================================
 async def get_quotation(
     db: AsyncSession,
@@ -290,7 +255,7 @@ async def get_quotation(
 
 
 # =====================================================
-# LIST
+# LIST QUOTATIONS
 # =====================================================
 async def list_quotations(
     db: AsyncSession,
@@ -302,7 +267,7 @@ async def list_quotations(
     order: str = "desc",
 ) -> QuotationListResponse:
 
-    query = select(Quotation).where(Quotation.is_deleted == False)
+    query = select(Quotation).where(Quotation.is_deleted.is_(False))
 
     if customer_id:
         query = query.where(Quotation.customer_id == customer_id)
@@ -314,7 +279,6 @@ async def list_quotations(
         "quotation_number": Quotation.quotation_number,
     }
     sort_col = sort_map.get(sort_by, Quotation.created_at)
-
     query = query.order_by(
         asc(sort_col) if order == "asc" else desc(sort_col)
     )
@@ -339,7 +303,7 @@ async def list_quotations(
 
 
 # =====================================================
-# UPDATE (DRAFT ONLY)
+# UPDATE QUOTATION
 # =====================================================
 async def update_quotation(
     db: AsyncSession,
@@ -395,14 +359,11 @@ async def update_quotation(
         quotation.valid_until = payload.valid_until
         changes.append("valid_until")
 
-    quotation.updated_by_id = user.id
     quotation.version += 1
+    quotation.updated_by_id = user.id
 
     await db.flush()
     await recalculate_totals(quotation)
-    await db.commit()
-
-    quotation = await _get_quotation_with_items(db, quotation.id)
 
     await emit_activity(
         db=db,
@@ -415,6 +376,10 @@ async def update_quotation(
         changes=", ".join(changes) if changes else "no changes",
     )
 
+    await db.commit()
+
+    quotation = await _get_quotation_with_items(db, quotation.id)
+
     return QuotationResponse(
         message="Quotation updated successfully",
         data=_map_quotation(quotation),
@@ -422,7 +387,7 @@ async def update_quotation(
 
 
 # =====================================================
-# APPROVE
+# APPROVE QUOTATION
 # =====================================================
 async def approve_quotation(
     db: AsyncSession,
@@ -431,13 +396,13 @@ async def approve_quotation(
     user,
 ) -> QuotationResponse:
 
-    stmt = (
+    result = await db.execute(
         update(Quotation)
         .where(
             Quotation.id == quotation_id,
             Quotation.version == version,
             Quotation.status == QuotationStatus.draft,
-            Quotation.is_deleted == False,
+            Quotation.is_deleted.is_(False),
         )
         .values(
             status=QuotationStatus.approved,
@@ -447,13 +412,9 @@ async def approve_quotation(
         .returning(Quotation.id)
     )
 
-    result = await db.execute(stmt)
     approved_id = result.scalar_one_or_none()
-
     if not approved_id:
         raise HTTPException(409, "Quotation cannot be approved")
-
-    await db.commit()
 
     quotation = await _get_quotation_with_items(db, approved_id)
 
@@ -467,6 +428,8 @@ async def approve_quotation(
         target_name=quotation.quotation_number,
     )
 
+    await db.commit()
+
     return QuotationResponse(
         message="Quotation approved successfully",
         data=_map_quotation(quotation),
@@ -474,7 +437,7 @@ async def approve_quotation(
 
 
 # =====================================================
-# DELETE (DRAFT ONLY)
+# DELETE QUOTATION
 # =====================================================
 async def delete_quotation(
     db: AsyncSession,
@@ -483,13 +446,13 @@ async def delete_quotation(
     user,
 ) -> QuotationResponse:
 
-    stmt = (
+    result = await db.execute(
         update(Quotation)
         .where(
             Quotation.id == quotation_id,
             Quotation.version == version,
             Quotation.status == QuotationStatus.draft,
-            Quotation.is_deleted == False,
+            Quotation.is_deleted.is_(False),
         )
         .values(
             is_deleted=True,
@@ -499,13 +462,9 @@ async def delete_quotation(
         .returning(Quotation.id)
     )
 
-    result = await db.execute(stmt)
     deleted_id = result.scalar_one_or_none()
-
     if not deleted_id:
         raise HTTPException(409, "Only draft quotations can be deleted")
-
-    await db.commit()
 
     quotation = await _get_quotation_with_items(db, deleted_id)
 
@@ -519,6 +478,8 @@ async def delete_quotation(
         target_name=quotation.quotation_number,
     )
 
+    await db.commit()
+
     return QuotationResponse(
         message="Quotation deleted successfully",
         data=_map_quotation(quotation),
@@ -526,7 +487,7 @@ async def delete_quotation(
 
 
 # =====================================================
-# CONVERT → INVOICE (STUB)
+# CONVERT → INVOICE
 # =====================================================
 async def convert_quotation_to_invoice(
     db: AsyncSession,
@@ -535,38 +496,23 @@ async def convert_quotation_to_invoice(
     user,
 ) -> QuotationResponse:
 
-    try:
-        quotation = await _get_quotation_for_update(db, quotation_id)
+    quotation = await _get_quotation_for_update(db, quotation_id)
 
-        if quotation.status != QuotationStatus.approved:
-            raise HTTPException(
-                status_code=409,
-                detail="Only approved quotations can be converted to invoice",
-            )
+    if quotation.status != QuotationStatus.approved:
+        raise HTTPException(
+            409,
+            "Only approved quotations can be converted to invoice",
+        )
 
-        if quotation.status == QuotationStatus.converted_to_invoice:
-            raise HTTPException(
-                status_code=409,
-                detail="Once converted, quotation cannot be converted again",
-            )
+    if quotation.version != version:
+        raise HTTPException(
+            409,
+            "Quotation modified by another process",
+        )
 
-        if quotation.version != version:
-            raise HTTPException(
-                status_code=409,
-                detail="Quotation modified by another process",
-            )
-
-        quotation.status = QuotationStatus.converted_to_invoice
-        quotation.version += 1
-        quotation.updated_by_id = user.id
-
-        await db.commit()
-
-    except Exception:
-        await db.rollback()
-        raise
-
-    quotation = await _get_quotation_with_items(db, quotation_id)
+    quotation.status = QuotationStatus.converted_to_invoice
+    quotation.version += 1
+    quotation.updated_by_id = user.id
 
     await emit_activity(
         db=db,
@@ -577,6 +523,10 @@ async def convert_quotation_to_invoice(
         actor_email=user.username,
         target_name=quotation.quotation_number,
     )
+
+    await db.commit()
+
+    quotation = await _get_quotation_with_items(db, quotation_id)
 
     return QuotationResponse(
         message="Quotation converted to invoice successfully",

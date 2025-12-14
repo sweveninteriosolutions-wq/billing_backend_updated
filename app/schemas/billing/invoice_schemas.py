@@ -92,3 +92,10 @@ class InvoiceAdminDiscountOverride(BaseModel):
     version: int
     discount_amount: Decimal = Field(ge=0)
     reason: Optional[str] = None
+
+class InvoiceListResponse(BaseModel):
+    message: str
+    total: int
+    page: int
+    page_size: int
+    data: List[InvoiceOut]

@@ -13,6 +13,9 @@ from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
 
 
+# =====================================================
+# MAPPER
+# =====================================================
 def _map_location(loc: InventoryLocation) -> InventoryLocationTableSchema:
     return InventoryLocationTableSchema(
         id=loc.id,
@@ -29,9 +32,9 @@ def _map_location(loc: InventoryLocation) -> InventoryLocationTableSchema:
     )
 
 
-# ------------------------------------------------------------------
-# CREATE
-# ------------------------------------------------------------------
+# =====================================================
+# CREATE LOCATION
+# =====================================================
 async def create_location(
     db: AsyncSession,
     payload: InventoryLocationCreateSchema,
@@ -46,7 +49,18 @@ async def create_location(
     db.add(location)
 
     try:
+        await emit_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            code=ActivityCode.CREATE_LOCATION,
+            actor_role=current_user.role.capitalize(),
+            actor_email=current_user.username,
+            target_name=payload.code.lower(),
+        )
+
         await db.commit()
+
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -55,23 +69,12 @@ async def create_location(
         )
 
     await db.refresh(location)
-
-    await emit_activity(
-        db,
-        user_id=current_user.id,
-        username=current_user.username,
-        code=ActivityCode.CREATE_LOCATION,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
-        target_name=location.code,
-    )
-
     return _map_location(location)
 
 
-# ------------------------------------------------------------------
-# LIST
-# ------------------------------------------------------------------
+# =====================================================
+# LIST LOCATIONS
+# =====================================================
 async def list_locations(
     db: AsyncSession,
     active_only: bool,
@@ -96,9 +99,9 @@ async def list_locations(
     return total, [_map_location(l) for l in result.scalars().all()]
 
 
-# ------------------------------------------------------------------
-# UPDATE (Optimistic Locking)
-# ------------------------------------------------------------------
+# =====================================================
+# UPDATE LOCATION (OPTIMISTIC LOCK)
+# =====================================================
 async def update_location(
     db: AsyncSession,
     location_id: int,
@@ -119,7 +122,8 @@ async def update_location(
             detail="No changes provided",
         )
 
-    changes = []
+    changes: list[str] = []
+
     for field, value in updates.items():
         old = getattr(existing, field)
         if old != value:
@@ -154,10 +158,8 @@ async def update_location(
             detail="Location was modified by another process",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.UPDATE_LOCATION,
@@ -167,12 +169,13 @@ async def update_location(
         changes=", ".join(changes),
     )
 
+    await db.commit()
     return _map_location(location)
 
 
-# ------------------------------------------------------------------
-# DEACTIVATE (Atomic)
-# ------------------------------------------------------------------
+# =====================================================
+# DEACTIVATE LOCATION
+# =====================================================
 async def deactivate_location(
     db: AsyncSession,
     location_id: int,
@@ -201,10 +204,8 @@ async def deactivate_location(
             detail="Location not found or already inactive",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.DEACTIVATE_LOCATION,
@@ -213,12 +214,13 @@ async def deactivate_location(
         target_name=location.code,
     )
 
+    await db.commit()
     return _map_location(location)
 
 
-# ------------------------------------------------------------------
-# REACTIVATE (Atomic)
-# ------------------------------------------------------------------
+# =====================================================
+# REACTIVATE LOCATION
+# =====================================================
 async def reactivate_location(
     db: AsyncSession,
     location_id: int,
@@ -247,10 +249,8 @@ async def reactivate_location(
             detail="Location not found or already active",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.REACTIVATE_LOCATION,
@@ -259,4 +259,5 @@ async def reactivate_location(
         target_name=location.code,
     )
 
+    await db.commit()
     return _map_location(location)

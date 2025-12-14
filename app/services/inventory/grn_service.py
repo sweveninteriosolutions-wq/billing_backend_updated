@@ -1,13 +1,14 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, exists, func, asc, desc, delete
-from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import noload
-
+from fastapi import HTTPException, status
 
 from app.models.inventory.grn_models import GRN, GRNItem
 from app.models.masters.product_models import Product
 from app.models.masters.supplier_models import Supplier
 from app.models.inventory.inventory_location_models import InventoryLocation
+from app.models.users.user_models import User
 
 from app.constants.grn import GRNStatus
 from app.constants.inventory_movement_type import InventoryMovementType
@@ -15,20 +16,27 @@ from app.constants.activity_codes import ActivityCode
 
 from app.services.inventory.inventory_movement_service import apply_inventory_movement
 from app.utils.activity_helpers import emit_activity
-from app.schemas.inventory.grn_schemas import GRNTableSchema, GRNUpdateSchema
+
 from app.schemas.inventory.grn_schemas import (
     GRNCreateSchema,
     GRNUpdateSchema,
+    GRNTableSchema,
 )
-from app.models.users.user_models import User
 
 
+# =====================================================
+# SORT MAP
+# =====================================================
 ALLOWED_SORT_FIELDS = {
     "created_at": GRN.created_at,
     "status": GRN.status,
     "id": GRN.id,
 }
 
+
+# =====================================================
+# MAPPER
+# =====================================================
 def _map_grn(grn: GRN) -> GRNTableSchema:
     return GRNTableSchema(
         id=grn.id,
@@ -41,10 +49,9 @@ def _map_grn(grn: GRN) -> GRNTableSchema:
         created_at=grn.created_at,
         created_by=grn.created_by_id,
         updated_by=grn.updated_by_id,
-        created_by_name=grn.created_by_username,   # ✅ from hybrid_property
-        updated_by_name=grn.updated_by_username,   # ✅ from hybrid_property
+        created_by_name=grn.created_by_username,
+        updated_by_name=grn.updated_by_username,
         version=grn.version,
-
         items=[
             {
                 "product_id": i.product_id,
@@ -54,32 +61,24 @@ def _map_grn(grn: GRN) -> GRNTableSchema:
             for i in grn.items
         ],
     )
-from sqlalchemy import select, exists
-from sqlalchemy.exc import IntegrityError
-from fastapi import HTTPException, status
 
+
+# =====================================================
+# CREATE GRN
+# =====================================================
 async def create_grn(
     db: AsyncSession,
     payload: GRNCreateSchema,
     current_user: User,
 ) -> GRNTableSchema:
 
-    # ----------------------------------
-    # Supplier validation
-    # ----------------------------------
     supplier = await db.get(Supplier, payload.supplier_id)
     if not supplier or supplier.is_deleted:
         raise HTTPException(400, "Invalid or inactive supplier")
 
-    # ----------------------------------
-    # Items validation
-    # ----------------------------------
     if not payload.items:
         raise HTTPException(400, "GRN must contain at least one item")
 
-    # ----------------------------------
-    # Early bill number check (UX only)
-    # ----------------------------------
     if payload.bill_number:
         exists_bill = await db.scalar(
             select(exists().where(
@@ -94,9 +93,6 @@ async def create_grn(
             )
 
     try:
-        # ----------------------------------
-        # Create GRN header
-        # ----------------------------------
         grn = GRN(
             supplier_id=payload.supplier_id,
             location_id=payload.location_id,
@@ -107,17 +103,14 @@ async def create_grn(
             created_by_id=current_user.id,
         )
         db.add(grn)
-        await db.flush()  # ensure grn.id is available
+        await db.flush()
 
-        # ----------------------------------
-        # Create GRN items
-        # ----------------------------------
         for item in payload.items:
             product = await db.get(Product, item.product_id)
             if not product or product.is_deleted:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid product {item.product_id}",
+                    400,
+                    f"Invalid or inactive product {item.product_id}",
                 )
 
             db.add(
@@ -129,43 +122,45 @@ async def create_grn(
                 )
             )
 
-        # ----------------------------------
-        # Commit transaction
-        # ----------------------------------
+        await emit_activity(
+            db=db,
+            user_id=current_user.id,
+            username=current_user.username,
+            code=ActivityCode.CREATE_GRN,
+            actor_role=current_user.role.capitalize(),
+            actor_email=current_user.username,
+            target_name=f"GRN {grn.id}",
+        )
+
         await db.commit()
         await db.refresh(grn)
 
     except IntegrityError:
-        # Handles DB-level unique constraint (authoritative)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Bill number already exists",
         )
 
-    # ----------------------------------
-    # Activity log (post-commit)
-    # ----------------------------------
-    await emit_activity(
-        db,
-        user_id=current_user.id,
-        username=current_user.username,
-        code=ActivityCode.CREATE_GRN,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
-        target_name=f"GRN {grn.id}",
-    )
-
     return _map_grn(grn)
 
 
-async def get_grn(db: AsyncSession, grn_id: int):
+# =====================================================
+# GET GRN
+# =====================================================
+async def get_grn(
+    db: AsyncSession,
+    grn_id: int,
+):
     grn = await db.get(GRN, grn_id)
     if not grn or grn.is_deleted:
         raise HTTPException(404, "GRN not found")
-
     return _map_grn(grn)
 
+
+# =====================================================
+# LIST GRNs
+# =====================================================
 async def list_grns(
     db: AsyncSession,
     *,
@@ -182,13 +177,10 @@ async def list_grns(
 
     if supplier_id:
         base = base.where(GRN.supplier_id == supplier_id)
-
     if status:
         base = base.where(GRN.status == status)
-
     if start_date:
         base = base.where(GRN.created_at >= start_date)
-
     if end_date:
         base = base.where(GRN.created_at <= end_date)
 
@@ -206,10 +198,12 @@ async def list_grns(
     )
 
     grns = result.scalars().all()
-
     return total, [_map_grn(g) for g in grns]
 
 
+# =====================================================
+# UPDATE GRN (DRAFT ONLY)
+# =====================================================
 async def update_grn(
     db: AsyncSession,
     grn_id: int,
@@ -217,9 +211,6 @@ async def update_grn(
     current_user: User,
 ) -> GRNTableSchema:
 
-    # ----------------------------------
-    # Fetch + optimistic lock (NO JOINS)
-    # ----------------------------------
     result = await db.execute(
         select(GRN)
         .options(noload("*"))
@@ -233,44 +224,27 @@ async def update_grn(
     grn = result.scalar_one_or_none()
 
     if not grn:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="GRN was modified by another process",
-        )
+        raise HTTPException(409, "GRN was modified by another process")
 
     if grn.status != GRNStatus.DRAFT:
-        raise HTTPException(
-            status_code=400,
-            detail="Only draft GRNs can be updated",
-        )
+        raise HTTPException(400, "Only draft GRNs can be updated")
 
-    # ----------------------------------
-    # Track changes for audit
-    # ----------------------------------
     changes: list[str] = []
 
-    # ----------------------------------
-    # Supplier validation (if changed)
-    # ----------------------------------
-    if payload.supplier_id is not None and payload.supplier_id != grn.supplier_id:
+    if payload.supplier_id and payload.supplier_id != grn.supplier_id:
         supplier = await db.get(Supplier, payload.supplier_id)
         if not supplier or supplier.is_deleted:
             raise HTTPException(400, "Invalid or inactive supplier")
-
         grn.supplier_id = payload.supplier_id
-        changes.append(f"supplier → {payload.supplier_id}")
-    
-    if payload.location_id is not None and payload.location_id != grn.location_id:
+        changes.append("supplier")
+
+    if payload.location_id and payload.location_id != grn.location_id:
         location = await db.get(InventoryLocation, payload.location_id)
         if not location or location.is_deleted:
             raise HTTPException(400, "Invalid or inactive location")
         grn.location_id = payload.location_id
-        changes.append(f"location → {payload.location_id}")
+        changes.append("location")
 
-
-    # ----------------------------------
-    # Bill number uniqueness
-    # ----------------------------------
     if payload.bill_number and payload.bill_number != grn.bill_number:
         exists_bill = await db.scalar(
             select(exists().where(
@@ -281,36 +255,28 @@ async def update_grn(
         )
         if exists_bill:
             raise HTTPException(409, "Bill number already exists")
-
         grn.bill_number = payload.bill_number
-        changes.append(f"bill_number → {payload.bill_number}")
+        changes.append("bill_number")
 
-    # ----------------------------------
-    # Update header fields (safe)
-    # ----------------------------------
     if payload.purchase_order is not None:
         grn.purchase_order = payload.purchase_order
-        changes.append("purchase_order updated")
+        changes.append("purchase_order")
 
     if payload.notes is not None:
         grn.notes = payload.notes
-        changes.append("notes updated")
+        changes.append("notes")
 
-    # ----------------------------------
-    # Replace items (atomic + safe)
-    # ----------------------------------
     if not payload.items:
         raise HTTPException(400, "GRN must contain at least one item")
 
-    await db.execute(
-        delete(GRNItem).where(GRNItem.grn_id == grn_id)
-    )
+    await db.execute(delete(GRNItem).where(GRNItem.grn_id == grn_id))
 
     for item in payload.items:
         product = await db.get(Product, item.product_id)
         if not product or product.is_deleted:
             raise HTTPException(
-                400, f"Invalid or inactive product {item.product_id}"
+                400,
+                f"Invalid or inactive product {item.product_id}",
             )
 
         db.add(
@@ -322,19 +288,11 @@ async def update_grn(
             )
         )
 
-    changes.append(f"{len(payload.items)} items replaced")
-
-    # ----------------------------------
-    # Version bump + audit
-    # ----------------------------------
     grn.version += 1
     grn.updated_by_id = current_user.id
 
-    await db.commit()
-    await db.refresh(grn)
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.UPDATE_GRN,
@@ -344,18 +302,21 @@ async def update_grn(
         changes=", ".join(changes),
     )
 
+    await db.commit()
+    await db.refresh(grn)
+
     return _map_grn(grn)
 
 
+# =====================================================
+# VERIFY GRN
+# =====================================================
 async def verify_grn(
     db: AsyncSession,
     grn_id: int,
     current_user: User,
 ) -> GRNTableSchema:
 
-    # ----------------------------------
-    # 1. Lock GRN row (NO JOINS)
-    # ----------------------------------
     result = await db.execute(
         select(GRN)
         .options(noload("*"))
@@ -373,21 +334,14 @@ async def verify_grn(
     if grn.status != GRNStatus.DRAFT:
         raise HTTPException(409, "GRN already processed")
 
-    # ----------------------------------
-    # 2. EXPLICITLY load items (safe)
-    # ----------------------------------
     items_result = await db.execute(
-        select(GRNItem)
-        .where(GRNItem.grn_id == grn.id)
+        select(GRNItem).where(GRNItem.grn_id == grn.id)
     )
     items = items_result.scalars().all()
 
     if not items:
         raise HTTPException(400, "GRN has no items")
 
-    # ----------------------------------
-    # 3. Apply inventory movements
-    # ----------------------------------
     for item in items:
         await apply_inventory_movement(
             db=db,
@@ -400,17 +354,11 @@ async def verify_grn(
             actor_user=current_user,
         )
 
-    # ----------------------------------
-    # 4. Mark verified
-    # ----------------------------------
     grn.status = GRNStatus.VERIFIED
     grn.updated_by_id = current_user.id
 
-    await db.commit()
-    await db.refresh(grn)
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.VERIFY_GRN,
@@ -419,8 +367,15 @@ async def verify_grn(
         target_name=f"GRN {grn.id}",
     )
 
+    await db.commit()
+    await db.refresh(grn)
+
     return _map_grn(grn)
 
+
+# =====================================================
+# DELETE GRN
+# =====================================================
 async def delete_grn(
     db: AsyncSession,
     grn_id: int,
@@ -437,10 +392,8 @@ async def delete_grn(
     grn.is_deleted = True
     grn.updated_by_id = current_user.id
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.DELETE_GRN,
@@ -448,5 +401,7 @@ async def delete_grn(
         actor_email=current_user.username,
         target_name=f"GRN {grn.id}",
     )
+
+    await db.commit()
 
     return _map_grn(grn)

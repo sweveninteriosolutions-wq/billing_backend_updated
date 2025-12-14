@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
-from fastapi import HTTPException, status
+from sqlalchemy import select, update, func, asc, desc
 from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException, status
 
 from app.models.masters.supplier_models import Supplier
 from app.schemas.masters.supplier_schemas import (
@@ -11,7 +11,7 @@ from app.schemas.masters.supplier_schemas import (
 )
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
-from sqlalchemy import asc, desc
+
 
 ALLOWED_SORT_FIELDS = {
     "name": Supplier.name,
@@ -58,10 +58,10 @@ async def create_supplier(
     payload: SupplierCreateSchema,
     current_user,
 ):
-    # Duplicate active supplier check
     exists = await db.scalar(
         select(Supplier.id).where(
             Supplier.name == payload.name,
+            Supplier.is_deleted.is_(False),
         )
     )
     if exists:
@@ -73,9 +73,20 @@ async def create_supplier(
     supplier = Supplier(
         **payload.model_dump(),
         created_by_id=current_user.id,
+        updated_by_id=current_user.id,
     )
 
     db.add(supplier)
+
+    await emit_activity(
+        db=db,
+        user_id=current_user.id,
+        username=current_user.username,
+        code=ActivityCode.CREATE_SUPPLIER,
+        actor_role=current_user.role.capitalize(),
+        actor_email=current_user.username,
+        target_name=payload.name,
+    )
 
     try:
         await db.commit()
@@ -88,18 +99,7 @@ async def create_supplier(
 
     await db.refresh(supplier)
 
-    await emit_activity(
-        db,
-        user_id=current_user.id,
-        username=current_user.username,
-        code=ActivityCode.CREATE_SUPPLIER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
-        target_name=supplier.name,
-    )
-
     return _map_supplier(supplier)
-
 
 
 # ======================================================
@@ -116,18 +116,24 @@ async def list_suppliers(
     base = select(Supplier).where(Supplier.is_deleted.is_(False))
 
     if search:
-        search_term = search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-        base = base.where(Supplier.name.ilike(f"%{search_term}%", escape='\\'))
+        search_term = (
+            search.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        base = base.where(
+            Supplier.name.ilike(f"%{search_term}%", escape="\\")
+        )
 
     sort_column = ALLOWED_SORT_FIELDS.get(sort_by, Supplier.created_at)
-    sort_order = asc(sort_column) if order.lower() == "asc" else desc(sort_column)
+    sort_expr = asc(sort_column) if order.lower() == "asc" else desc(sort_column)
 
     total = await db.scalar(
         select(func.count()).select_from(base.subquery())
     )
 
     result = await db.execute(
-        base.order_by(sort_order)
+        base.order_by(sort_expr)
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
@@ -138,16 +144,22 @@ async def list_suppliers(
 # ======================================================
 # GET SUPPLIER
 # ======================================================
-async def get_supplier(db: AsyncSession, supplier_id: int):
+async def get_supplier(
+    db: AsyncSession,
+    supplier_id: int,
+):
     supplier = await db.get(Supplier, supplier_id)
     if not supplier or supplier.is_deleted:
-        raise HTTPException(status_code=404, detail="Supplier not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Supplier not found",
+        )
 
     return _map_supplier(supplier)
 
 
 # ======================================================
-# UPDATE SUPPLIER (OPTIMISTIC LOCKING + DIFF LOGGING)
+# UPDATE SUPPLIER (OPTIMISTIC LOCKING)
 # ======================================================
 async def update_supplier(
     db: AsyncSession,
@@ -157,7 +169,10 @@ async def update_supplier(
 ):
     existing = await db.get(Supplier, supplier_id)
     if not existing or existing.is_deleted:
-        raise HTTPException(status_code=404, detail="Supplier not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Supplier not found",
+        )
 
     updates = payload.model_dump(exclude_unset=True, exclude={"version"})
     if not updates:
@@ -166,7 +181,6 @@ async def update_supplier(
             detail="No changes provided",
         )
 
-    # Duplicate name check (only if name is changing)
     if "name" in updates and updates["name"] != existing.name:
         dup = await db.scalar(
             select(Supplier.id).where(
@@ -181,7 +195,6 @@ async def update_supplier(
                 detail="Supplier name already exists",
             )
 
-    # Calculate diff for activity log
     changes: list[str] = []
     for field, new_value in updates.items():
         old_value = getattr(existing, field)
@@ -218,10 +231,8 @@ async def update_supplier(
             detail="Supplier was modified by another process. Refresh and retry.",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.UPDATE_SUPPLIER,
@@ -231,12 +242,13 @@ async def update_supplier(
         changes=", ".join(changes),
     )
 
+    await db.commit()
+
     return _map_supplier(supplier)
 
 
-
 # ======================================================
-# DEACTIVATE SUPPLIER (SOFT DELETE)
+# DEACTIVATE SUPPLIER
 # ======================================================
 async def deactivate_supplier(
     db: AsyncSession,
@@ -268,10 +280,8 @@ async def deactivate_supplier(
             detail="Supplier was modified by another process. Refresh and retry.",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.DEACTIVATE_SUPPLIER,
@@ -280,9 +290,9 @@ async def deactivate_supplier(
         target_name=supplier.name,
     )
 
+    await db.commit()
+
     return _map_supplier(supplier)
-
-
 
 
 # ======================================================
@@ -318,10 +328,8 @@ async def reactivate_supplier(
             detail="Supplier was modified by another process. Refresh and retry.",
         )
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.REACTIVATE_SUPPLIER,
@@ -329,5 +337,7 @@ async def reactivate_supplier(
         actor_email=current_user.username,
         target_name=supplier.name,
     )
+
+    await db.commit()
 
     return _map_supplier(supplier)

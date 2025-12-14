@@ -32,6 +32,7 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     customer_snapshot = Column(JSON, nullable=False, default=dict)
     
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
+    quotation = relationship("Quotation", lazy="selectin")
     customer = relationship("Customer", back_populates="invoices", lazy="selectin")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
     loyalty_tokens = relationship("LoyaltyToken", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
@@ -40,6 +41,13 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
         Index("ix_invoice_customer_status", "customer_id", "status"),
         Index("ix_invoice_status", "status"),
     )
+
+    def __repr__(self):
+        return (
+            f"<Invoice id={self.id} "
+            f"number={self.invoice_number} "
+            f"status={self.status.value}>"
+        )
 
 
 class InvoiceItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
@@ -54,8 +62,17 @@ class InvoiceItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     line_total = Column(Numeric(14, 2), nullable=False)
 
     invoice = relationship("Invoice", back_populates="items")
+    product = relationship("Product", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_invoice_item_qty"),
         CheckConstraint("unit_price >= 0", name="ck_invoice_item_price"),
     )
+
+    def __repr__(self):
+        return (
+            f"<InvoiceItem id={self.id} "
+            f"product_id={self.product_id} "
+            f"qty={self.quantity} "
+            f"total={self.line_total}>"
+        )

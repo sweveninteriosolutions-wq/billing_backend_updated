@@ -1,11 +1,8 @@
-# app/services/customer_service.py
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc
-from sqlalchemy.orm import aliased
 from fastapi import HTTPException, status
 
 from app.models.masters.customer_models import Customer
-from app.models.users.user_models import User
 from app.schemas.masters.customer_schema import (
     CustomerCreate,
     CustomerUpdate,
@@ -16,6 +13,10 @@ from app.schemas.masters.customer_schema import (
 from app.utils.activity_helpers import emit_activity
 from app.constants.activity_codes import ActivityCode
 
+
+# =====================================================
+# MAPPER
+# =====================================================
 def _map_customer(customer: Customer) -> CustomerOut:
     return CustomerOut(
         id=customer.id,
@@ -29,47 +30,53 @@ def _map_customer(customer: Customer) -> CustomerOut:
         created_by=customer.created_by_id,
         updated_by=customer.updated_by_id,
 
-        created_by_name=customer.created_by_username,   # ✅ from hybrid_property
-        updated_by_name=customer.updated_by_username,   # ✅ from hybrid_property
+        created_by_name=customer.created_by_username,
+        updated_by_name=customer.updated_by_username,
 
         created_at=customer.created_at,
     )
 
 
+# =====================================================
+# CREATE CUSTOMER
+# =====================================================
 async def create_customer(
     db: AsyncSession,
     payload: CustomerCreate,
     current_user,
 ):
-    # Pre-check: unique email
     exists = await db.scalar(
         select(Customer.id).where(Customer.email == payload.email)
     )
     if exists:
-        raise HTTPException(status_code=400, detail="Customer already exists")
+        raise HTTPException(
+            status_code=400,
+            detail="Customer already exists",
+        )
 
     customer = Customer(
         name=payload.name,
         email=payload.email,
         phone=payload.phone,
         address=payload.address,
-        created_by_id=current_user.id,   # ✅ FIX
-        updated_by_id=current_user.id,   # ✅ FIX
+        created_by_id=current_user.id,
+        updated_by_id=current_user.id,
     )
 
     db.add(customer)
-    await db.commit()
-    await db.refresh(customer)
 
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.CREATE_CUSTOMER,
         actor_role=current_user.role.capitalize(),
         actor_email=current_user.username,
-        target_name=customer.name,
+        target_name=payload.name,
     )
+
+    await db.commit()
+    await db.refresh(customer)
 
     return CustomerResponse(
         message="Customer created successfully",
@@ -77,6 +84,9 @@ async def create_customer(
     )
 
 
+# =====================================================
+# GET CUSTOMER
+# =====================================================
 async def get_customer(
     db: AsyncSession,
     customer_id: int,
@@ -84,13 +94,20 @@ async def get_customer(
 
     customer = await db.get(Customer, customer_id)
     if not customer or not customer.is_active:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
 
     return CustomerResponse(
         message="Customer retrieved successfully",
         data=_map_customer(customer),
     )
 
+
+# =====================================================
+# LIST CUSTOMERS
+# =====================================================
 async def get_all_customers(
     db: AsyncSession,
     name: str | None,
@@ -102,7 +119,7 @@ async def get_all_customers(
     order: str,
 ) -> CustomerListResponse:
 
-    query = select(Customer).where(Customer.is_active == True)
+    query = select(Customer).where(Customer.is_active.is_(True))
 
     if name:
         query = query.where(Customer.name.ilike(f"%{name}%"))
@@ -116,11 +133,19 @@ async def get_all_customers(
         "created_at": Customer.created_at,
     }
     sort_col = sort_map.get(sort_by, Customer.created_at)
-    query = query.order_by(asc(sort_col) if order == "asc" else desc(sort_col))
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    query = query.order_by(
+        asc(sort_col) if order == "asc" else desc(sort_col)
+    )
 
-    result = await db.execute(query.offset(offset).limit(limit))
+    total = await db.scalar(
+        select(func.count()).select_from(query.subquery())
+    )
+
+    result = await db.execute(
+        query.offset(offset).limit(limit)
+    )
+
     customers = result.scalars().all()
 
     return CustomerListResponse(
@@ -128,19 +153,25 @@ async def get_all_customers(
         total=total or 0,
         data=[_map_customer(c) for c in customers],
     )
+
+
+# =====================================================
+# UPDATE CUSTOMER (OPTIMISTIC LOCK)
+# =====================================================
 async def update_customer(
     db: AsyncSession,
     customer_id: int,
     payload: CustomerUpdate,
     current_user,
 ):
-
     customer = await db.get(Customer, customer_id)
     if not customer or not customer.is_active:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
 
-    # Track previous values
-    changes = []
+    changes: list[str] = []
 
     if payload.name and payload.name != customer.name:
         changes.append("name updated")
@@ -165,13 +196,12 @@ async def update_customer(
             detail="No changes detected",
         )
 
-    # Optimistic locking update
     stmt = (
         update(Customer)
         .where(
             Customer.id == customer_id,
             Customer.version == payload.version,
-            Customer.is_active == True,
+            Customer.is_active.is_(True),
         )
         .values(
             **payload.dict(exclude_unset=True, exclude={"version"}),
@@ -190,11 +220,8 @@ async def update_customer(
             detail="Customer was modified by another process",
         )
 
-    await db.commit()
-
-    # Activity log with detailed changes
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.UPDATE_CUSTOMER,
@@ -204,12 +231,17 @@ async def update_customer(
         changes=", ".join(changes),
     )
 
+    await db.commit()
+
     return CustomerResponse(
         message="Customer updated successfully",
         data=_map_customer(updated_customer),
     )
 
 
+# =====================================================
+# DELETE (SOFT)
+# =====================================================
 async def delete_customer(
     db: AsyncSession,
     customer_id: int,
@@ -218,16 +250,17 @@ async def delete_customer(
 
     customer = await db.get(Customer, customer_id)
     if not customer or not customer.is_active:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
 
     customer.is_active = False
-    customer.updated_by_id  = current_user.id
+    customer.updated_by_id = current_user.id
     customer.version += 1
 
-    await db.commit()
-
     await emit_activity(
-        db,
+        db=db,
         user_id=current_user.id,
         username=current_user.username,
         code=ActivityCode.DEACTIVATE_CUSTOMER,
@@ -236,9 +269,9 @@ async def delete_customer(
         target_name=customer.name,
     )
 
+    await db.commit()
+
     return CustomerResponse(
         message="Customer deactivated successfully",
         data=_map_customer(customer),
     )
-
-

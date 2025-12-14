@@ -153,7 +153,7 @@ async def convert_quotation_to_invoice_api(
         current_user,
     )
 
-@router.post("/ready_for_invoice", response_model=QuotationListResponse)
+@router.get("/ready_for_invoice", response_model=QuotationListResponse)
 async def list_quotations_ready_for_invoice_api(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(

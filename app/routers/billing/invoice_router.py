@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Query
 
 from app.core.db import get_db
 from app.schemas.billing.invoice_schemas import *
@@ -64,12 +65,20 @@ async def get_invoice_api(
     return await get_invoice(db, invoice_id)
 
 
-@router.get("", response_model=list[InvoiceOut])
-async def list_invoices_api(
+@router.get("")
+async def list_invoices_route(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, le=100),
+    include_total: bool = Query(False),  # 👈 frontend decides
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(["admin", "cashier"]))
 ):
-    return await list_invoices(db)
+    return await list_invoices(
+        db,
+        page=page,
+        page_size=page_size,
+        include_total=include_total,
+    )
+
 
 
 @router.patch("/{invoice_id}", response_model=InvoiceResponse)
