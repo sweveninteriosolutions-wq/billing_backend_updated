@@ -148,5 +148,15 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.REACTIVATE_DISCOUNT:
         "{actor_role} ({actor_email}) reactivated discount {target_name} ({target_code})",
     
+    # ---------------- STOCK TRANSFERS ----------------
+    ActivityCode.CREATE_STOCK_TRANSFER:
+        "{actor_role} ({actor_email}) created stock transfer {target_name}",
+    ActivityCode.UPDATE_STOCK_TRANSFER:
+        "{actor_role} ({actor_email}) updated stock transfer {target_name}: {changes}",
+    ActivityCode.COMPLETE_STOCK_TRANSFER:
+        "{actor_role} ({actor_email}) completed stock transfer {target_name}",
+    ActivityCode.CANCEL_STOCK_TRANSFER:
+        "{actor_role} ({actor_email}) cancelled stock transfer {target_name}",
+    
 }
 

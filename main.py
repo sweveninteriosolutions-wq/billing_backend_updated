@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import (user_router, auth_router, activity_router, customer_router, supplier_router, product_router
                          , inventory_balance_router, inventory_location_router, grn_router, quotation_router,
-                         invoice_router, discount_router, payment_router, loyalty_token_router)
+                         invoice_router, discount_router, payment_router, loyalty_token_router, stock_transfer_router)
 from app.core.db import Base, engine, init_models
 from app.core.scheduler import scheduler
 import logging
@@ -49,6 +49,7 @@ app.include_router(quotation_router)
 app.include_router(invoice_router)
 app.include_router(payment_router)
 app.include_router(loyalty_token_router)
+app.include_router(stock_transfer_router)
 
 
 @app.on_event("startup")
