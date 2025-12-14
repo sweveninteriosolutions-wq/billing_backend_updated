@@ -10,6 +10,8 @@ from app.utils.activity_helpers import emit_activity
 from app.services.inventory.inventory_movement_service import apply_inventory_movement
 from sqlalchemy import func
 from app.models.enums.stock_transfer_status import TransferStatus
+from app.constants.inventory_movement_type import InventoryMovementType
+from sqlalchemy.orm import noload
 
 
 async def create_stock_transfer(
@@ -77,9 +79,6 @@ async def create_stock_transfer(
     await db.refresh(transfer)
     return transfer
 
-from app.constants.inventory_movement_type import InventoryMovementType
-
-from sqlalchemy.orm import noload
 
 async def complete_stock_transfer(
     db: AsyncSession,

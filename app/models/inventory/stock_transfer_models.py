@@ -32,7 +32,6 @@ class StockTransfer(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     quantity = Column(Integer, nullable=False)
 
-    # 🔥 USE INVENTORY LOCATION TABLE (NOT ENUM)
     from_location_id = Column(
         Integer,
         ForeignKey("inventory_locations.id", ondelete="RESTRICT"),
@@ -67,36 +66,35 @@ class StockTransfer(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     )
 
     # ----------------------------------
-    # RELATIONSHIPS
+    # RELATIONSHIPS (NO EAGER LOADING)
     # ----------------------------------
-    product = relationship("Product", lazy="joined")
+    product = relationship("Product")
 
     from_location = relationship(
         "InventoryLocation",
         foreign_keys=[from_location_id],
-        lazy="joined",
     )
 
     to_location = relationship(
         "InventoryLocation",
         foreign_keys=[to_location_id],
-        lazy="joined",
     )
 
     transferred_by = relationship(
         "User",
         foreign_keys=[transferred_by_id],
-        lazy="joined",
     )
 
     completed_by = relationship(
         "User",
         foreign_keys=[completed_by_id],
-        lazy="joined",
     )
 
     __table_args__ = (
-        CheckConstraint("quantity > 0", name="ck_stock_transfer_qty"),
+        CheckConstraint(
+            "quantity > 0",
+            name="ck_stock_transfer_qty",
+        ),
         CheckConstraint(
             "from_location_id != to_location_id",
             name="ck_stock_transfer_location_diff",
