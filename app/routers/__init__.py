@@ -18,6 +18,7 @@ from .inventory.grn_router import router as grn_router
 from .billing.quotation_router import router as quotation_router
 from .billing.invoice_router import router as invoice_router
 from .billing.payment_router import router as payment_router
+from .billing.loyaltyTokens_router import router as loyalty_token_router
 
 
 __all__ = [
@@ -38,5 +39,6 @@ __all__ = [
 "quotation_router",
 "invoice_router",
 "payment_router",
+"loyalty_token_router",
 
 ]
