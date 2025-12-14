@@ -3,6 +3,7 @@ from app.models.inventory.inventory_movement_models import InventoryMovement
 from app.models.inventory.inventory_balance_models import InventoryBalance
 from app.models.inventory.inventory_location_models import InventoryLocation
 from app.models.inventory.grn_models import GRN, GRNItem
+from app.models.inventory.stock_transfer_models import StockTransfer
 
 # Masters
 from app.models.masters.product_models import Product
