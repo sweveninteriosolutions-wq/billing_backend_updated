@@ -13,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from decimal import Decimal
+from sqlalchemy.types import Date
 
 from app.core.db import Base
 from app.models.base.mixins import TimestampMixin, SoftDeleteMixin, AuditMixin
@@ -25,22 +26,36 @@ class Quotation(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     id = Column(Integer, primary_key=True)
 
     quotation_number = Column(String(50), unique=True, nullable=False, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
-    status = Column(Enum(QuotationStatus), nullable=False, default=QuotationStatus.draft)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+
+    status = Column(
+        Enum(QuotationStatus),
+        nullable=False,
+        default=QuotationStatus.draft
+    )
+
+    valid_until = Column(Date, nullable=True)
+
+    subtotal_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
+    tax_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
+    total_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
+
+    version = Column(Integer, nullable=False, default=1)
+    item_signature = Column(String(128), index=True, nullable=False)
 
     description = Column(String, nullable=True)
     notes = Column(String, nullable=True)
-
-    subtotal_amount = Column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
-    tax_amount = Column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
-    total_amount = Column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
-
     additional_data = Column(JSON, nullable=True)
-    
-    customer = relationship("Customer", back_populates="quotations", lazy="joined")
-    items = relationship("QuotationItem", back_populates="quotation", cascade="all, delete-orphan", lazy="selectin")
-    sales_orders = relationship("SalesOrder", back_populates="quotation", lazy="selectin")
-    invoices = relationship("Invoice", back_populates="quotation", lazy="selectin")
+
+    customer = relationship("Customer", lazy="joined")
+    items = relationship(
+        "QuotationItem",
+        back_populates="quotation",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+
+    # invoices = relationship("Invoice", back_populates="quotation", lazy="selectin")
 
     __table_args__ = (
         Index(
@@ -62,14 +77,21 @@ class QuotationItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     id = Column(Integer, primary_key=True)
 
-    quotation_id = Column(Integer, ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    quotation_id = Column(
+        Integer,
+        ForeignKey("quotations.id", ondelete="CASCADE"),
+        nullable=False
+    )
 
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+
+    product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
-    total_price = Column(Numeric(14, 2), nullable=False)
+    line_total = Column(Numeric(14, 2), nullable=False)
 
-    quotation = relationship("Quotation", back_populates="items", lazy="joined")
+    quotation = relationship("Quotation", back_populates="items")
+
     product = relationship("Product", lazy="joined")
 
     __table_args__ = (

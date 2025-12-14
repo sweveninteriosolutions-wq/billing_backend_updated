@@ -13,6 +13,8 @@ from .inventory.inventory_balance_router import router as inventory_balance_rout
 from .inventory.inventory_location_router import router as inventory_location_router    
 from .inventory.grn_router import router as grn_router
 
+from .billing.quotation_router import router as quotation_router
+
 
 __all__ = [
 "user_router",
@@ -27,5 +29,7 @@ __all__ = [
 "inventory_balance_router",
 "inventory_location_router",
 "grn_router",
+
+"quotation_router",
 
 ]

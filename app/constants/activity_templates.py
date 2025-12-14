@@ -95,6 +95,21 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.DELETE_GRN:
     "{actor_role} ({actor_email}) deleted GRN {target_name}",
 
+    # ---------------- QUOTATIONS ----------------
+    ActivityCode.CREATE_QUOTATION:
+    "{actor_role} ({actor_email}) created quotation {target_name}",
+    ActivityCode.UPDATE_QUOTATION:
+    "{actor_role} ({actor_email}) updated quotation {target_name}: {changes}",
+    ActivityCode.APPROVE_QUOTATION:
+    "{actor_role} ({actor_email}) approved quotation {target_name}",
+    ActivityCode.CONVERT_QUOTATION_TO_INVOICE:
+    "{actor_role} ({actor_email}) converted quotation {target_name} to invoice",
+    ActivityCode.CANCEL_QUOTATION:
+    "{actor_role} ({actor_email}) cancelled quotation {target_name}",
+    ActivityCode.EXPIRE_QUOTATION:
+    "{actor_role} ({actor_email}) expired quotation {target_name}",
+
+    
 
 }
 
