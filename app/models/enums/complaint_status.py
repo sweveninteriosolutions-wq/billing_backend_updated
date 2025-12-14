@@ -1,13 +1,13 @@
 import enum
 
 class ComplaintStatus(str, enum.Enum):
-    open = "open"
-    in_progress = "in_progress"
-    resolved = "resolved"
-    closed = "closed"
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
 
 
 class ComplaintPriority(str, enum.Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
