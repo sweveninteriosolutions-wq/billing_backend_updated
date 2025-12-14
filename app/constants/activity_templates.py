@@ -158,5 +158,19 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.CANCEL_STOCK_TRANSFER:
         "{actor_role} ({actor_email}) cancelled stock transfer {target_name}",
     
+    # ---------------- COMPLAINTS ----------------
+    ActivityCode.CREATE_COMPLAINT:
+        "{actor_role} ({actor_email}) created complaint #{target_id} for customer {customer_id}",
+
+    ActivityCode.UPDATE_COMPLAINT:
+        "{actor_role} ({actor_email}) updated complaint #{target_id}: {changes}",
+
+    ActivityCode.UPDATE_COMPLAINT_STATUS:
+        "{actor_role} ({actor_email}) changed complaint #{target_id} status "
+        "from {old_status} → {new_status}",
+
+    ActivityCode.DELETE_COMPLAINT:
+        "{actor_role} ({actor_email}) deleted complaint #{target_id}",
+    
 }
 

@@ -21,6 +21,8 @@ from .billing.invoice_router import router as invoice_router
 from .billing.payment_router import router as payment_router
 from .billing.loyaltyTokens_router import router as loyalty_token_router
 
+from .support.complaint_router import router as complaint_router
+
 
 __all__ = [
 "user_router",
@@ -42,5 +44,7 @@ __all__ = [
 "invoice_router",
 "payment_router",
 "loyalty_token_router",
+
+"complaint_router",
 
 ]
