@@ -82,12 +82,13 @@ class Complaint(Base, AuditMixin):
 
     __table_args__ = (
         Index(
-            "ix_complaint_customer_invoice_product",
+            "uq_complaint_customer_invoice_product_active",
             "customer_id",
             "invoice_id",
             "product_id",
+            unique=True,
+            postgresql_where=(Column("is_deleted") == False),
         ),
     )
-
     def __repr__(self):
         return f"<Complaint id={self.id} status={self.status}>"

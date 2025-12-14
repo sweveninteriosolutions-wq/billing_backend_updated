@@ -60,12 +60,18 @@ async def create_complaint(
     else:
         conditions.append(Complaint.product_id.is_(None))
 
-    exists = await db.scalar(select(Complaint.id).where(*conditions))
-    if exists:
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        db.add(complaint)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Complaint already exists for this invoice & product",
         )
+
 
     complaint = Complaint(
         **payload.model_dump(),
@@ -115,7 +121,7 @@ async def get_complaint(
     complaint = result.scalar_one_or_none()
 
     if not complaint:
-        raise HTTPException(404, "Complaint not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
 
     return ComplaintResponse(
         message="Complaint retrieved successfully",

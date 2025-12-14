@@ -19,6 +19,7 @@ from app.services.support.complaint_service import (
     delete_complaint,
 )
 from app.models.support.complaint_models import ComplaintStatus
+from app.models.enums.complaint_status import ComplaintPriority
 
 router = APIRouter(prefix="/complaints", tags=["Complaints"])
 
@@ -41,7 +42,7 @@ async def list_complaints_api(
     invoice_id: int | None = Query(None),
     product_id: int | None = Query(None),
     status: ComplaintStatus | None = Query(None),
-    priority: str | None = Query(None),
+    priority: ComplaintPriority  | None = Query(None),
     search: str | None = Query(None),
 
     page: int = Query(1, ge=1),
