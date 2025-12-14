@@ -29,6 +29,8 @@ class GRN(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     status = Column(String(50), nullable=False, default="draft")  # draft → verified → cancelled
 
+    version = Column(Integer, nullable=False, default=1)
+
     supplier = relationship("Supplier", back_populates="grns", lazy="joined")
     items = relationship("GRNItem", back_populates="grn", cascade="all, delete-orphan", lazy="selectin")
 

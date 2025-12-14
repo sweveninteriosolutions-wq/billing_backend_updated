@@ -2,6 +2,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import noload
 from app.models.inventory.inventory_balance_models import InventoryBalance
 from app.models.masters.product_models import Product
 from app.models.inventory.inventory_location_models import InventoryLocation
@@ -37,6 +38,7 @@ async def list_inventory_balances(
 ):
     stmt = (
         select(InventoryBalance, Product, InventoryLocation)
+        .options(noload("*"))  
         .join(Product, InventoryBalance.product_id == Product.id)
         .join(InventoryLocation, InventoryBalance.location_id == InventoryLocation.id)
     )
@@ -69,6 +71,7 @@ async def list_inventory_balances(
 async def low_stock_alerts(db: AsyncSession):
     stmt = (
         select(InventoryBalance, Product, InventoryLocation)
+        .options(noload("*")) 
         .join(Product, InventoryBalance.product_id == Product.id)
         .join(InventoryLocation, InventoryBalance.location_id == InventoryLocation.id)
         .where(
