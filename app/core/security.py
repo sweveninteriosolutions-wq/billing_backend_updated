@@ -1,43 +1,46 @@
-from passlib.context import CryptContext
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
+# app/core/security.py
+
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from fastapi import HTTPException, status
+
 from app.core.config import (
-    JWT_ANON_SECRET,
+    JWT_SECRET_KEY,
     JWT_ALGORITHM,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 
-# --------------------------------------------------
-# Password hashing
-# --------------------------------------------------
-
+# =====================================================
+# PASSWORD HASHING
+# =====================================================
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
 )
 
-
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
-
 
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
-
-# --------------------------------------------------
-# Access Token (JWT)
-# --------------------------------------------------
-
+# =====================================================
+# ACCESS TOKEN
+# =====================================================
 def create_access_token(
     subject: str,
     token_version: int,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
-    now = datetime.utcnow()
-    expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    now = datetime.now(timezone.utc)
+    expire = now + (
+        expires_delta
+        if expires_delta
+        else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
 
     payload = {
         "sub": subject,
@@ -47,25 +50,29 @@ def create_access_token(
         "exp": expire,
     }
 
-    return jwt.encode(payload, JWT_ANON_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-
-# --------------------------------------------------
-# Decode + validate JWT
-# --------------------------------------------------
-
+# =====================================================
+# DECODE + VALIDATE TOKEN
+# =====================================================
 def decode_access_token(token: str) -> dict:
-    """
-    Decode and validate an access token.
-    Used ONLY by get_current_user.
-    """
     try:
-        payload = jwt.decode(token, JWT_ANON_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+        )
 
         if payload.get("type") != "access":
-            raise ValueError("Invalid token type")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+            )
 
         return payload
 
     except JWTError:
-        raise ValueError("Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )

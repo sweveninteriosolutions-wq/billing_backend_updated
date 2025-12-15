@@ -1,115 +1,105 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.schemas.users.user_schemas import (
+    APIResponse,
     UserCreateSchema,
     UserUpdateSchema,
-    UserResponseSchema,
-    UsersListResponseSchema,
-    UserDashboardResponseSchema,
+    UserListFilters,
+    VersionOnlySchema,
 )
 from app.services.users.user_services import (
     create_user,
     list_users,
+    get_user_by_id,
     update_user,
     get_user_dashboard_stats,
+    deactivate_user,
+    reactivate_user,
 )
 from app.utils.check_roles import require_role
+from app.utils.response import success_response
+from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/users", tags=["Users"])
+logger = get_logger(__name__)
 
 
-# =========================
-# CREATE USER
-# =========================
-@router.post("/", response_model=UserResponseSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=APIResponse)
 async def create_user_api(
     payload: UserCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
-    user = await create_user(db, payload, current_user)
-    return {"msg": "User created successfully", "data": user}
+    logger.info("Create user request", extra={"email": payload.email})
+    user = await create_user(db, payload, admin)
+    return success_response("User created successfully", user)
 
 
-# =========================
-# LIST USERS
-# =========================
-@router.get("/", response_model=UsersListResponseSchema)
+@router.get("/", response_model=APIResponse)
 async def list_users_api(
+    filters: UserListFilters = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
-    users = await list_users(db)
-    return {"msg": "Users fetched", "data": users}
+    logger.info("List users request", extra=filters.dict())
+    users = await list_users(db, filters)
+    return success_response("Users fetched", users)
 
 
-# =========================
-# UPDATE USER (PATCH)
-# =========================
-@router.patch("/{user_id}", response_model=UserResponseSchema)
+@router.get("/{user_id}", response_model=APIResponse)
+async def get_user_api(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_role(["admin"])),
+):
+    logger.info("Get user by id", extra={"user_id": user_id})
+    user = await get_user_by_id(db, user_id)
+    return success_response("User fetched", user)
+
+
+@router.patch("/{user_id}", response_model=APIResponse)
 async def update_user_api(
     user_id: int,
     payload: UserUpdateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
-    user = await update_user(db, user_id, payload, current_user)
-    return {"msg": "User updated successfully", "data": user}
+    logger.info("Update user", extra={"user_id": user_id})
+    user = await update_user(db, user_id, payload, admin)
+    return success_response("User updated successfully", user)
 
 
-# =========================
-# DEACTIVATE USER (SOFT DELETE)
-# =========================
-@router.delete("/{user_id}", response_model=UserResponseSchema)
+@router.delete("/{user_id}", response_model=APIResponse)
 async def deactivate_user_api(
     user_id: int,
-    payload: UserUpdateSchema,  # must include version
+    payload: VersionOnlySchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
-    payload.is_active = False
-
-    user = await update_user(
-        db=db,
-        user_id=user_id,
-        payload=payload,
-        admin_user=current_user,
-    )
-
-    return {"msg": "User deactivated successfully", "data": user}
+    logger.info("Deactivate user", extra={"user_id": user_id})
+    user = await deactivate_user(db, user_id, payload.version, admin)
+    return success_response("User deactivated successfully", user)
 
 
-# =========================
-# REACTIVATE USER
-# =========================
-@router.post("/{user_id}/activate", response_model=UserResponseSchema)
+@router.post("/{user_id}/activate", response_model=APIResponse)
 async def reactivate_user_api(
     user_id: int,
-    payload: UserUpdateSchema,  # must include version
+    payload: VersionOnlySchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
-    payload.is_active = True
-
-    user = await update_user(
-        db=db,
-        user_id=user_id,
-        payload=payload,
-        admin_user=current_user,
-    )
-
-    return {"msg": "User reactivated successfully", "data": user}
+    logger.info("Reactivate user", extra={"user_id": user_id})
+    user = await reactivate_user(db, user_id, payload.version, admin)
+    return success_response("User reactivated successfully", user)
 
 
-# =========================
-# DASHBOARD STATS
-# =========================
-@router.get("/dashboard/stats", response_model=UserDashboardResponseSchema)
-async def user_dashboard_stats_api(
+@router.get("/dashboard/stats", response_model=APIResponse)
+async def dashboard_stats_api(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    admin=Depends(require_role(["admin"])),
 ):
+    logger.info("User dashboard stats requested")
     stats = await get_user_dashboard_stats(db)
-    return {"msg": "Dashboard stats fetched", "data": stats}
+    return success_response("Dashboard stats fetched", stats)

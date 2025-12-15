@@ -9,16 +9,35 @@ from app.core.db import Base, engine, init_models
 from app.core.scheduler import scheduler
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,  
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import IntegrityError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.error_handlers import (
+    app_exception_handler,
+    validation_exception_handler,
+    http_exception_handler,
+    integrity_error_handler,
+    unhandled_exception_handler,
 )
+from app.core.exceptions import AppException
+
+from app.core.logging import setup_logging
+from app.middleware.request_logging import request_logging_middleware
 
 app = FastAPI(
     title="Backend Billing API",
     description="FastAPI + Supabase backend for Billing & Inventory",
     version="0.1.0"
 )
+
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(IntegrityError, integrity_error_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
+
+app.middleware("http")(request_logging_middleware)
 
 # CORS setup
 app.add_middleware(

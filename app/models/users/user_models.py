@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.db import Base
@@ -16,17 +16,22 @@ class User(Base):
     last_login = Column(DateTime(timezone=True))
     is_online = Column(Boolean, default=False)
     version = Column(Integer, nullable=False, default=1)
-
     created_by_admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by_admin = relationship("User", remote_side=[id], lazy="selectin")
-
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin")
 
+    __table_args__ = (
+        Index("ix_users_role", "role"),
+        Index("ix_users_active", "is_active"),
+        Index("ix_users_online", "is_online"),
+        Index("ix_users_created_at", "created_at"),
+    )
+
     def __repr__(self):
-        return f"<User id={self.id} username={self.username} role={self.role} created_by_admin_id={self.created_by_admin_id}>"
+        return f"<User id={self.id} username={self.username} role={self.role}>"
 
 
 class RefreshToken(Base):
@@ -36,6 +41,7 @@ class RefreshToken(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     token = Column(String(255), unique=True, nullable=False, index=True)
     revoked = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="refresh_tokens", lazy="selectin")
