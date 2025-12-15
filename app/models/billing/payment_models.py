@@ -1,19 +1,23 @@
-from sqlalchemy import Column, Integer, Numeric, String, ForeignKey
+from sqlalchemy import Column, Integer, Numeric, String, ForeignKey, CheckConstraint, Index
 from sqlalchemy.orm import relationship
 from app.core.db import Base
 from app.models.base.mixins import TimestampMixin, AuditMixin
+
 
 class Payment(Base, TimestampMixin, AuditMixin):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True)
-
-    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True )
-
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
     amount = Column(Numeric(14, 2), nullable=False)
-    payment_method = Column(String(50), nullable=True)
+    payment_method = Column(String(50), nullable=True, index=True)
 
-    invoice = relationship("Invoice", back_populates="payments", lazy="joined")
-        
+    invoice = relationship("Invoice", back_populates="payments", lazy="selectin")
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
+        Index("ix_payment_invoice_created", "invoice_id", "created_at"),
+    )
+
     def __repr__(self):
-        return f"<Payment id={self.id} amount={self.amount}>"
+        return f"<Payment id={self.id} invoice_id={self.invoice_id} amount={self.amount}>"
