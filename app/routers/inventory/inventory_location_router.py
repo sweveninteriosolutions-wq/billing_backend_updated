@@ -1,70 +1,103 @@
-# app/routers/inventory/location_router.py
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.utils.check_roles import require_role
-from app.services.inventory.location_service import (
+from app.utils.response import success_response, APIResponse
+from app.services.inventory.inventory_location_service import (
     create_location,
     list_locations,
     update_location,
     deactivate_location,
     reactivate_location,
 )
-from app.schemas.inventory.location_schemas import (
-    InventoryLocationCreateSchema,
-    InventoryLocationUpdateSchema,
-    InventoryLocationResponseSchema,
-    InventoryLocationListResponseSchema,
+from app.schemas.inventory.inventory_location_schemas import (
+    InventoryLocationCreate,
+    InventoryLocationUpdate,
+    InventoryLocationOut,
+    InventoryLocationListData,
 )
 
-router = APIRouter(prefix="/inventory/locations", tags=["Inventory Locations"])
+router = APIRouter(
+    prefix="/inventory/locations",
+    tags=["Inventory Locations"],
+)
 
-@router.post("/", response_model=InventoryLocationResponseSchema)
+
+# =========================
+# CREATE
+# =========================
+@router.post("/", response_model=APIResponse[InventoryLocationOut])
 async def create_location_api(
-    payload: InventoryLocationCreateSchema,
+    payload: InventoryLocationCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 ):
-    loc = await create_location(db, payload, current_user)
-    return {"msg": "Location created", "data": loc}
+    location = await create_location(db, payload, user)
+    return success_response("Location created successfully", location)
 
-@router.get("/", response_model=InventoryLocationListResponseSchema)
+
+# =========================
+# LIST
+# =========================
+@router.get("/", response_model=APIResponse[InventoryLocationListData])
 async def list_locations_api(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
     active_only: bool = Query(True),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    total, data = await list_locations(db, active_only, page, page_size)
-    return {"msg": "Locations fetched", "total": total, "data": data}
+    data = await list_locations(
+        db=db,
+        active_only=active_only,
+        page=page,
+        page_size=page_size,
+    )
+    return success_response("Locations fetched successfully", data)
 
-@router.patch("/{location_id}", response_model=InventoryLocationResponseSchema)
+
+# =========================
+# UPDATE
+# =========================
+@router.patch("/{location_id}", response_model=APIResponse[InventoryLocationOut])
 async def update_location_api(
     location_id: int,
-    payload: InventoryLocationUpdateSchema,
+    payload: InventoryLocationUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 ):
-    loc = await update_location(db, location_id, payload, current_user)
-    return {"msg": "Location updated", "data": loc}
+    location = await update_location(db, location_id, payload, user)
+    return success_response("Location updated successfully", location)
 
-@router.delete("/{location_id}", response_model=InventoryLocationResponseSchema)
+
+# =========================
+# DEACTIVATE
+# =========================
+@router.patch(
+    "/{location_id}/deactivate",
+    response_model=APIResponse[InventoryLocationOut],
+)
 async def deactivate_location_api(
     location_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    loc = await deactivate_location(db, location_id, current_user)
-    return {"msg": "Location deactivated", "data": loc}
+    location = await deactivate_location(db, location_id, user)
+    return success_response("Location deactivated successfully", location)
 
-@router.post("/{location_id}/activate", response_model=InventoryLocationResponseSchema)
+
+# =========================
+# REACTIVATE
+# =========================
+@router.patch(
+    "/{location_id}/activate",
+    response_model=APIResponse[InventoryLocationOut],
+)
 async def reactivate_location_api(
     location_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    loc = await reactivate_location(db, location_id, current_user)
-    return {"msg": "Location reactivated", "data": loc}
+    location = await reactivate_location(db, location_id, user)
+    return success_response("Location reactivated successfully", location)

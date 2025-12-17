@@ -287,6 +287,7 @@ async def deactivate_discount(
         .values(
             is_active=False,
             is_deleted=True,
+            version=Discount.version + 1,
             updated_by_id=user.id,
         )
         .returning(Discount)
