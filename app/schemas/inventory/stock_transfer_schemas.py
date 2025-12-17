@@ -1,34 +1,30 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from app.models.enums.stock_transfer_status import TransferStatus
 
 
-# =====================================================
-# BASE
-# =====================================================
-class StockTransferBase(BaseModel):
+class StockTransferCreateSchema(BaseModel):
     product_id: int
     quantity: int = Field(gt=0)
     from_location_id: int
     to_location_id: int
 
 
-# =====================================================
-# CREATE
-# =====================================================
-class StockTransferCreateSchema(StockTransferBase):
-    pass
-
-
-# =====================================================
-# RESPONSE TABLE
-# =====================================================
-class StockTransferOutSchema(StockTransferBase):
+class StockTransferTableSchema(BaseModel):
     id: int
+    product_id: int
+    quantity: int
+    from_location_id: int
+    to_location_id: int
     status: TransferStatus
+
     transferred_by_id: int
+    transferred_by: Optional[str]
+
     completed_by_id: Optional[int]
+    completed_by: Optional[str]
+
     created_at: datetime
     updated_at: Optional[datetime]
 
@@ -36,15 +32,12 @@ class StockTransferOutSchema(StockTransferBase):
         from_attributes = True
 
 
-# =====================================================
-# RESPONSE WRAPPERS
-# =====================================================
 class StockTransferResponse(BaseModel):
     message: str
-    data: StockTransferOutSchema
+    data: StockTransferTableSchema
 
 
 class StockTransferListResponse(BaseModel):
     message: str
     total: int
-    data: list[StockTransferOutSchema]
+    data: List[StockTransferTableSchema]
