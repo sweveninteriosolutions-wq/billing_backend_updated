@@ -1,5 +1,3 @@
-# app/routers/inventory/grn_router.py
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,22 +6,26 @@ from app.utils.check_roles import require_role
 
 from app.schemas.inventory.grn_schemas import (
     GRNCreateSchema,
+    GRNUpdateSchema,
     GRNResponseSchema,
     GRNListResponseSchema,
-    GRNUpdateSchema,
 )
 
 from app.services.inventory.grn_service import (
     create_grn,
-    verify_grn,
-    delete_grn,
     list_grns,
     get_grn,
     update_grn,
+    verify_grn,
+    delete_grn,
 )
 
 router = APIRouter(prefix="/grns", tags=["GRN"])
 
+
+# =====================================================
+# CREATE
+# =====================================================
 @router.post("/", response_model=GRNResponseSchema)
 async def create_grn_api(
     payload: GRNCreateSchema,
@@ -32,10 +34,14 @@ async def create_grn_api(
 ):
     grn = await create_grn(db, payload, current_user)
     return {
-        "msg": "GRN created successfully",
+        "message": "GRN created successfully",
         "data": grn,
     }
 
+
+# =====================================================
+# LIST
+# =====================================================
 @router.get("/", response_model=GRNListResponseSchema)
 async def list_grns_api(
     db: AsyncSession = Depends(get_db),
@@ -43,7 +49,6 @@ async def list_grns_api(
 
     supplier_id: int | None = Query(None),
     status: str | None = Query(None),
-
     start_date: str | None = Query(None, description="YYYY-MM-DD"),
     end_date: str | None = Query(None, description="YYYY-MM-DD"),
 
@@ -53,7 +58,7 @@ async def list_grns_api(
     sort_by: str = Query("created_at"),
     order: str = Query("desc"),
 ):
-    total, grns = await list_grns(
+    total, data = await list_grns(
         db=db,
         supplier_id=supplier_id,
         status=status,
@@ -66,11 +71,15 @@ async def list_grns_api(
     )
 
     return {
-        "msg": "GRNs fetched successfully",
+        "message": "GRNs fetched successfully",
         "total": total,
-        "data": grns,
+        "data": data,
     }
 
+
+# =====================================================
+# GET BY ID
+# =====================================================
 @router.get("/{grn_id}", response_model=GRNResponseSchema)
 async def get_grn_api(
     grn_id: int,
@@ -79,10 +88,14 @@ async def get_grn_api(
 ):
     grn = await get_grn(db, grn_id)
     return {
-        "msg": "GRN fetched successfully",
+        "message": "GRN fetched successfully",
         "data": grn,
     }
 
+
+# =====================================================
+# UPDATE (DRAFT ONLY)
+# =====================================================
 @router.patch("/{grn_id}", response_model=GRNResponseSchema)
 async def update_grn_api(
     grn_id: int,
@@ -90,13 +103,16 @@ async def update_grn_api(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(["admin", "inventory"])),
 ):
-    grn_data = await update_grn(db, grn_id, payload, current_user)
+    grn = await update_grn(db, grn_id, payload, current_user)
     return {
-        "msg": "GRN updated successfully",
-        "data": grn_data,
+        "message": "GRN updated successfully",
+        "data": grn,
     }
 
 
+# =====================================================
+# VERIFY (STOCK IN)
+# =====================================================
 @router.post("/{grn_id}/verify", response_model=GRNResponseSchema)
 async def verify_grn_api(
     grn_id: int,
@@ -105,10 +121,14 @@ async def verify_grn_api(
 ):
     grn = await verify_grn(db, grn_id, current_user)
     return {
-        "msg": "GRN verified successfully",
+        "message": "GRN verified successfully",
         "data": grn,
     }
 
+
+# =====================================================
+# DELETE (SOFT DELETE, DRAFT ONLY)
+# =====================================================
 @router.delete("/{grn_id}", response_model=GRNResponseSchema)
 async def delete_grn_api(
     grn_id: int,
@@ -117,7 +137,6 @@ async def delete_grn_api(
 ):
     grn = await delete_grn(db, grn_id, current_user)
     return {
-        "msg": "GRN deleted successfully",
+        "message": "GRN deleted successfully",
         "data": grn,
     }
-
