@@ -4,9 +4,17 @@ from datetime import datetime
 
 
 # =========================
-# REQUEST SCHEMAS
+# BASE RESPONSE
 # =========================
+class APIResponse(BaseModel):
+    success: bool = True
+    message: str
+    data: Optional[object] = None
 
+
+# =========================
+# CREATE / UPDATE
+# =========================
 class UserCreateSchema(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
@@ -14,10 +22,6 @@ class UserCreateSchema(BaseModel):
 
 
 class UserUpdateSchema(BaseModel):
-    """
-    PATCH-style update.
-    `version` is REQUIRED for optimistic locking.
-    """
     email: Optional[EmailStr] = None
     password: Optional[str] = None
     role: Optional[str] = None
@@ -25,45 +29,62 @@ class UserUpdateSchema(BaseModel):
     version: int
 
 
+class VersionOnlySchema(BaseModel):
+    version: int
+
+
+# =========================
+# LIST FILTERS
+# =========================
+class UserListFilters(BaseModel):
+    search: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_online: Optional[bool] = None
+    created_today: Optional[bool] = None
+    created_by: Optional[int] = None
+    sort_by: str = "created_at"
+    sort_order: str = "desc"
+    limit: int = 50
+    offset: int = 0
+
+
 # =========================
 # RESPONSE SCHEMAS
 # =========================
-
-class UserTableSchema(BaseModel):
+class UserListItemSchema(BaseModel):
     id: int
-    name: str
-    email: EmailStr
+    username: EmailStr
     role: str
     status: str
-    last_login: Optional[datetime]
     is_online: bool
+    last_login: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class UserDetailSchema(BaseModel):
+    id: int
+    username: EmailStr
+    role: str
+    is_active: bool
+    is_online: bool
+    last_login: Optional[datetime]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    created_by_admin_id: Optional[int]
     version: int
 
     class Config:
         from_attributes = True
 
 
-class UserResponseSchema(BaseModel):
-    msg: str
-    data: Optional[UserTableSchema] = None
-
-
-class UsersListResponseSchema(BaseModel):
-    msg: str
-    data: List[UserTableSchema]
-
-
 # =========================
 # DASHBOARD
 # =========================
-
 class UserDashboardStatsSchema(BaseModel):
     total_users: int
     active_users: int
     admin_users: int
     online_users: int
-
-
-class UserDashboardResponseSchema(BaseModel):
-    msg: str
-    data: UserDashboardStatsSchema
