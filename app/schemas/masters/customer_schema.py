@@ -1,8 +1,8 @@
-# app/schemas/customer_schema.py
+# app/schemas/masters/customer_schema.py
+
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, List
 from datetime import datetime
-
 
 class CustomerBase(BaseModel):
     name: str
@@ -27,6 +27,7 @@ class CustomerUpdate(BaseModel):
 
 class CustomerOut(CustomerBase):
     id: int
+    customer_code: str
     is_active: bool
     version: int
 
@@ -41,12 +42,6 @@ class CustomerOut(CustomerBase):
         from_attributes = True
 
 
-class CustomerResponse(BaseModel):
-    message: str
-    data: Optional[CustomerOut] = None
-
-
-class CustomerListResponse(BaseModel):
-    message: str
+class CustomerListData(BaseModel):
     total: int
-    data: List[CustomerOut]
+    items: List[CustomerOut]
