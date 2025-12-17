@@ -1,9 +1,18 @@
+# app/services/auth/activity_service.py
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc
-from typing import Optional
 
 from app.models.support.activity_models import UserActivity
+from app.schemas.auth.activity_schemas import (
+    UserActivityOut,
+    UserActivityFilters,
+)
+from app.core.exceptions import AppException
+from app.constants.error_codes import ErrorCode
+from app.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 ALLOWED_SORT_FIELDS = {
     "created_at": UserActivity.created_at,
@@ -11,51 +20,51 @@ ALLOWED_SORT_FIELDS = {
 }
 
 
-async def get_user_activities(
+async def list_user_activities(
     *,
     db: AsyncSession,
-    user_id: Optional[int] = None,
-    username: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 20,
-    sort_by: str = "created_at",
-    order: str = "desc",
+    filters: UserActivityFilters,
 ):
-    """
-    Fetch paginated user activity logs with filters.
-    """
-
     # -------------------------
-    # Base query
+    # Base queries
     # -------------------------
     query = select(UserActivity)
-    count_query = select(func.count()).select_from(UserActivity)
+    count_query = select(func.count(UserActivity.id))
 
     # -------------------------
     # Filters
     # -------------------------
-    if user_id:
-        query = query.where(UserActivity.user_id == user_id)
-        count_query = count_query.where(UserActivity.user_id == user_id)
+    if filters.user_id:
+        query = query.where(UserActivity.user_id == filters.user_id)
+        count_query = count_query.where(UserActivity.user_id == filters.user_id)
 
-    if username:
-        query = query.where(UserActivity.username_snapshot.ilike(f"%{username}%"))
+    if filters.username:
+        query = query.where(
+            UserActivity.username_snapshot.ilike(f"%{filters.username}%")
+        )
         count_query = count_query.where(
-            UserActivity.username_snapshot.ilike(f"%{username}%")
+            UserActivity.username_snapshot.ilike(f"%{filters.username}%")
         )
 
     # -------------------------
-    # Sorting
+    # Sorting (safe)
     # -------------------------
-    sort_column = ALLOWED_SORT_FIELDS.get(sort_by, UserActivity.created_at)
-    order_fn = desc if order.lower() == "desc" else asc
+    sort_column = ALLOWED_SORT_FIELDS.get(filters.sort_by)
+    if not sort_column:
+        raise AppException(
+            400,
+            "Invalid sort field",
+            ErrorCode.VALIDATION_ERROR,
+        )
+
+    order_fn = desc if filters.sort_order == "desc" else asc
     query = query.order_by(order_fn(sort_column))
 
     # -------------------------
     # Pagination
     # -------------------------
-    offset = (page - 1) * page_size
-    query = query.offset(offset).limit(page_size)
+    offset = (filters.page - 1) * filters.page_size
+    query = query.limit(filters.page_size).offset(offset)
 
     # -------------------------
     # Execute
@@ -63,4 +72,18 @@ async def get_user_activities(
     total = await db.scalar(count_query)
     result = await db.execute(query)
 
-    return total or 0, result.scalars().all()
+    activities = result.scalars().all()
+
+    logger.info(
+        "User activities fetched",
+        extra={
+            "total": total,
+            "page": filters.page,
+            "page_size": filters.page_size,
+        },
+    )
+
+    return {
+        "total": total or 0,
+        "items": [UserActivityOut.from_orm(a) for a in activities],
+    }
