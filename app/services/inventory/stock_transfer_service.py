@@ -341,22 +341,7 @@ async def get_stock_transfer(
             ErrorCode.NOT_FOUND,
         )
 
-    data = row._mapping 
-
-    return StockTransferTableSchema(
-        id=data["id"],
-        product_id=data["product_id"],
-        quantity=data["quantity"],
-        from_location_id=data["from_location_id"],
-        to_location_id=data["to_location_id"],
-        status=data["status"],
-        transferred_by_id=data["transferred_by_id"],
-        transferred_by=data["transferred_by"],
-        completed_by_id=data["completed_by_id"],
-        completed_by=data["completed_by"],
-        created_at=data["created_at"],
-        updated_at=data["updated_at"],
-    )
+    return StockTransferTableSchema.from_orm(row)
 
 async def list_stock_transfers(
     db: AsyncSession,
@@ -423,22 +408,6 @@ async def list_stock_transfers(
 
     rows = (await db.execute(stmt)).all()
 
-    data = [
-        StockTransferTableSchema(
-            id=r.id,
-            product_id=r.product_id,
-            quantity=r.quantity,
-            from_location_id=r.from_location_id,
-            to_location_id=r.to_location_id,
-            status=r.status,
-            transferred_by_id=r.transferred_by_id,
-            transferred_by=r.transferred_by,
-            completed_by_id=r.completed_by_id,
-            completed_by=r.completed_by,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-        )
-        for r in rows
-    ]
+    data = [StockTransferTableSchema.from_orm(r) for r in rows]
 
     return total or 0, data
