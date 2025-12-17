@@ -147,6 +147,10 @@ ACTIVITY_TEMPLATES = {
         "{actor_role} ({actor_email}) deactivated discount {target_name} ({target_code})",
     ActivityCode.REACTIVATE_DISCOUNT:
         "{actor_role} ({actor_email}) reactivated discount {target_name} ({target_code})",
+    ActivityCode.EXPIRE_DISCOUNT:
+        "{actor_role} ({actor_email}) expired discount {target_name} ({target_code})",
+    ActivityCode.ACTIVATE_DISCOUNT:
+        "{actor_role} ({actor_email}) activated discount {target_name} ({target_code})",
     
     # ---------------- STOCK TRANSFERS ----------------
     ActivityCode.CREATE_STOCK_TRANSFER:
