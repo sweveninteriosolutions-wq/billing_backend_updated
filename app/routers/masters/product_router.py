@@ -42,7 +42,7 @@ async def create_product_api(
 async def list_products_api(
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin", "inventory"])),
-    search: str | None = Query(None),
+    search: str | None = Query(None, description="Search by name or SKU"),
     category: str | None = Query(None),
     supplier_id: int | None = Query(None),
     min_price: float | None = Query(None, ge=0),

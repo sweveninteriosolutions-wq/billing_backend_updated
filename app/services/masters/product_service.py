@@ -77,11 +77,22 @@ async def create_product(db: AsyncSession, payload: ProductCreate, user):
         await db.flush()
     except IntegrityError:
         await db.rollback()
+        # Check if the name already exists to provide a more specific error.
+        name_exists = await db.scalar(
+                select(Product.id).where(Product.name == payload.name, Product.is_deleted.is_(False))
+            )
+        if name_exists:
+            raise AppException(
+                    409,
+                    "Product name already exists",
+                    ErrorCode.PRODUCT_NAME_EXISTS,
+                )
+            # If not name, assume it was a race condition on SKU.
         raise AppException(
-            409,
-            "SKU already exists",
-            ErrorCode.PRODUCT_SKU_EXISTS,
-        )
+                409,
+                "SKU already exists",
+                ErrorCode.PRODUCT_SKU_EXISTS,
+            )
 
     await emit_activity(
         db=db,
