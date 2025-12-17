@@ -1,32 +1,45 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc
 from sqlalchemy.exc import IntegrityError
-from fastapi import HTTPException, status
+import uuid
+import re
+from typing import Optional
 
 from app.models.masters.supplier_models import Supplier
 from app.schemas.masters.supplier_schemas import (
-    SupplierCreateSchema,
-    SupplierUpdateSchema,
-    SupplierTableSchema,
+    SupplierCreate,
+    SupplierUpdate,
+    SupplierOut,
+    SupplierListData,
 )
+from app.core.exceptions import AppException
+from app.constants.error_codes import ErrorCode
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-ALLOWED_SORT_FIELDS = {
-    "name": Supplier.name,
-    "created_at": Supplier.created_at,
-    "email": Supplier.email,
-    "phone": Supplier.phone,
-}
+# =========================
+# CODE GENERATOR
+# =========================
+def generate_supplier_code(name: str, phone: Optional[str]) -> str:
+    clean_name = re.sub(r"[^A-Za-z]", "", name or "").upper()
+    prefix_name = clean_name[:3].ljust(3, "X")
+    digits = re.sub(r"[^0-9]", "", phone or "")
+    prefix_phone = digits[-3:] if len(digits) >= 3 else digits.zfill(3)
+    unique_part = uuid.uuid4().hex[:6].upper()
+    return f"SUP-{prefix_name}{prefix_phone}-{unique_part}"
 
 
-# ======================================================
-# INTERNAL MAPPER
-# ======================================================
-def _map_supplier(supplier: Supplier) -> SupplierTableSchema:
-    return SupplierTableSchema(
+# =========================
+# MAPPER
+# =========================
+def _map_supplier(supplier: Supplier) -> SupplierOut:
+    return SupplierOut(
         id=supplier.id,
+        supplier_code=supplier.supplier_code,
         name=supplier.name,
         contact_person=supplier.contact_person,
         phone=supplier.phone,
@@ -36,28 +49,35 @@ def _map_supplier(supplier: Supplier) -> SupplierTableSchema:
         is_active=not supplier.is_deleted,
         version=supplier.version,
 
-        created_at=supplier.created_at,
-        updated_at=supplier.updated_at,
-
-        created_by_id=supplier.created_by_id,
-        updated_by_id=supplier.updated_by_id,
+        created_by=supplier.created_by_id,
+        updated_by=supplier.updated_by_id,
         created_by_name=(
-            supplier.created_by.username if supplier.created_by else None
+            supplier.created_by.username
+            if getattr(supplier, "created_by", None)
+            else None
         ),
         updated_by_name=(
-            supplier.updated_by.username if supplier.updated_by else None
+            supplier.updated_by.username
+            if getattr(supplier, "updated_by", None)
+            else None
         ),
+
+        created_at=supplier.created_at,
+        updated_at=supplier.updated_at,
     )
 
 
-# ======================================================
-# CREATE SUPPLIER
-# ======================================================
+# =========================
+# CREATE
+# =========================
 async def create_supplier(
     db: AsyncSession,
-    payload: SupplierCreateSchema,
-    current_user,
+    payload: SupplierCreate,
+    user,
 ):
+    # ------------------------------------
+    # Fast pre-check (UX optimization)
+    # ------------------------------------
     exists = await db.scalar(
         select(Supplier.id).where(
             Supplier.name == payload.name,
@@ -65,55 +85,75 @@ async def create_supplier(
         )
     )
     if exists:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier with this name already exists",
+        raise AppException(
+            409,
+            "Supplier already exists",
+            ErrorCode.SUPPLIER_NAME_EXISTS,
         )
 
     supplier = Supplier(
+        supplier_code=generate_supplier_code(payload.name, payload.phone),
         **payload.model_dump(),
-        created_by_id=current_user.id,
-        updated_by_id=current_user.id,
+        created_by_id=user.id,
+        updated_by_id=user.id,
     )
 
     db.add(supplier)
 
-    await emit_activity(
-        db=db,
-        user_id=current_user.id,
-        username=current_user.username,
-        code=ActivityCode.CREATE_SUPPLIER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
-        target_name=payload.name,
-    )
-
     try:
-        await db.commit()
+        await db.flush()  # forces INSERT, catches constraint issues early
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier with this name already exists",
+        raise AppException(
+            409,
+            "Supplier already exists",
+            ErrorCode.SUPPLIER_NAME_EXISTS,
         )
 
+    await emit_activity(
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.CREATE_SUPPLIER,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=supplier.name,
+    )
+
+    await db.commit()
     await db.refresh(supplier)
 
     return _map_supplier(supplier)
 
 
-# ======================================================
-# LIST SUPPLIERS
-# ======================================================
+# =========================
+# GET
+# =========================
+async def get_supplier(db: AsyncSession, supplier_id: int):
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier or supplier.is_deleted:
+        raise AppException(
+            404,
+            "Supplier not found",
+            ErrorCode.SUPPLIER_NOT_FOUND,
+        )
+
+    return _map_supplier(supplier)
+
+
+# =========================
+# LIST (LATEST FIRST)
+# =========================
 async def list_suppliers(
+    *,
     db: AsyncSession,
-    search: str | None,
-    page: int,
-    page_size: int,
+    search: Optional[str],
+    limit: int,
+    offset: int,
     sort_by: str,
-    order: str,
+    sort_order: str,
 ):
-    base = select(Supplier).where(Supplier.is_deleted.is_(False))
+    query = select(Supplier).where(Supplier.is_deleted.is_(False))
 
     if search:
         search_term = (
@@ -121,90 +161,99 @@ async def list_suppliers(
             .replace("%", "\\%")
             .replace("_", "\\_")
         )
-        base = base.where(
-            Supplier.name.ilike(f"%{search_term}%", escape="\\")
+        query = query.where(Supplier.name.ilike(f"%{search_term}%", escape="\\"))
+
+    sort_map = {
+        "name": Supplier.name,
+        "created_at": Supplier.created_at,
+        "email": Supplier.email,
+        "phone": Supplier.phone,
+    }
+
+    sort_col = sort_map.get(sort_by)
+    if not sort_col:
+        raise AppException(
+            400,
+            "Invalid sort field",
+            ErrorCode.VALIDATION_ERROR,
         )
 
-    sort_column = ALLOWED_SORT_FIELDS.get(sort_by, Supplier.created_at)
-    sort_expr = asc(sort_column) if order.lower() == "asc" else desc(sort_column)
+    query = query.order_by(
+        desc(sort_col) if sort_order == "desc" else asc(sort_col)
+    )
 
     total = await db.scalar(
-        select(func.count()).select_from(base.subquery())
+        select(func.count()).select_from(query.subquery())
     )
 
     result = await db.execute(
-        base.order_by(sort_expr)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.offset(offset).limit(limit)
     )
 
-    return total, [_map_supplier(s) for s in result.scalars().all()]
+    return SupplierListData(
+        total=total or 0,
+        items=[_map_supplier(s) for s in result.scalars().all()],
+    )
 
 
-# ======================================================
-# GET SUPPLIER
-# ======================================================
-async def get_supplier(
-    db: AsyncSession,
-    supplier_id: int,
-):
-    supplier = await db.get(Supplier, supplier_id)
-    if not supplier or supplier.is_deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Supplier not found",
-        )
-
-    return _map_supplier(supplier)
-
-
-# ======================================================
-# UPDATE SUPPLIER (OPTIMISTIC LOCKING)
-# ======================================================
+# =========================
+# UPDATE
+# =========================
 async def update_supplier(
     db: AsyncSession,
     supplier_id: int,
-    payload: SupplierUpdateSchema,
-    current_user,
+    payload: SupplierUpdate,
+    user,
 ):
-    existing = await db.get(Supplier, supplier_id)
-    if not existing or existing.is_deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Supplier not found",
+    current = await db.get(Supplier, supplier_id)
+    if not current or current.is_deleted:
+        raise AppException(
+            404,
+            "Supplier not found",
+            ErrorCode.SUPPLIER_NOT_FOUND,
         )
 
-    updates = payload.model_dump(exclude_unset=True, exclude={"version"})
-    if not updates:
-        raise HTTPException(
-            status_code=400,
-            detail="No changes provided",
-        )
+    changes: list[str] = []
 
-    if "name" in updates and updates["name"] != existing.name:
-        dup = await db.scalar(
+    # ---------------------------
+    # DUPLICATE NAME CHECK (RESTORED)
+    # ---------------------------
+    if payload.name and payload.name != current.name:
+        exists = await db.scalar(
             select(Supplier.id).where(
-                Supplier.name == updates["name"],
+                Supplier.name == payload.name,
                 Supplier.id != supplier_id,
                 Supplier.is_deleted.is_(False),
             )
         )
-        if dup:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Supplier name already exists",
+        if exists:
+            raise AppException(
+                409,
+                "Supplier name already exists",
+                ErrorCode.SUPPLIER_NAME_EXISTS,
             )
 
-    changes: list[str] = []
-    for field, new_value in updates.items():
-        old_value = getattr(existing, field)
-        if old_value != new_value:
-            changes.append(f"{field}: {old_value} → {new_value}")
+        changes.append(f"name: '{current.name}' → '{payload.name}'")
+
+    if payload.contact_person and payload.contact_person != current.contact_person:
+        changes.append(
+            f"contact_person: '{current.contact_person}' → '{payload.contact_person}'"
+        )
+
+    if payload.phone and payload.phone != current.phone:
+        changes.append(f"phone: '{current.phone}' → '{payload.phone}'")
+
+    if payload.email and payload.email != current.email:
+        changes.append(f"email: '{current.email}' → '{payload.email}'")
+
+    if payload.address and payload.address != current.address:
+        changes.append(f"address: '{current.address}' → '{payload.address}'")
 
     if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="No actual changes detected",
+        raise AppException(
+            400,
+            "No changes detected",
+            ErrorCode.VALIDATION_ERROR,
         )
 
     stmt = (
@@ -215,9 +264,9 @@ async def update_supplier(
             Supplier.is_deleted.is_(False),
         )
         .values(
-            **updates,
+            **payload.model_dump(exclude_unset=True, exclude={"version"}),
             version=Supplier.version + 1,
-            updated_by_id=current_user.id,
+            updated_by_id=user.id,
         )
         .returning(Supplier)
     )
@@ -226,47 +275,49 @@ async def update_supplier(
     supplier = result.scalar_one_or_none()
 
     if not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier was modified by another process. Refresh and retry.",
+        raise AppException(
+            409,
+            "Supplier was modified by another process",
+            ErrorCode.SUPPLIER_VERSION_CONFLICT,
         )
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.UPDATE_SUPPLIER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=supplier.name,
         changes=", ".join(changes),
     )
 
     await db.commit()
-
     return _map_supplier(supplier)
 
 
-# ======================================================
-# DEACTIVATE SUPPLIER
-# ======================================================
+
+# =========================
+# DEACTIVATE
+# =========================
 async def deactivate_supplier(
+    *,
     db: AsyncSession,
     supplier_id: int,
-    payload: SupplierUpdateSchema,
-    current_user,
+    version: int,
+    user,
 ):
     stmt = (
         update(Supplier)
         .where(
             Supplier.id == supplier_id,
-            Supplier.version == payload.version,
+            Supplier.version == version,
             Supplier.is_deleted.is_(False),
         )
         .values(
             is_deleted=True,
-            updated_by_id=current_user.id,
             version=Supplier.version + 1,
+            updated_by_id=user.id,
         )
         .returning(Supplier)
     )
@@ -275,69 +326,21 @@ async def deactivate_supplier(
     supplier = result.scalar_one_or_none()
 
     if not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier was modified by another process. Refresh and retry.",
+        raise AppException(
+            409,
+            "Supplier was modified by another process or already deactivated",
+            ErrorCode.SUPPLIER_VERSION_CONFLICT,
         )
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.DEACTIVATE_SUPPLIER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=supplier.name,
     )
 
     await db.commit()
-
-    return _map_supplier(supplier)
-
-
-# ======================================================
-# REACTIVATE SUPPLIER
-# ======================================================
-async def reactivate_supplier(
-    db: AsyncSession,
-    supplier_id: int,
-    payload: SupplierUpdateSchema,
-    current_user,
-):
-    stmt = (
-        update(Supplier)
-        .where(
-            Supplier.id == supplier_id,
-            Supplier.version == payload.version,
-            Supplier.is_deleted.is_(True),
-        )
-        .values(
-            is_deleted=False,
-            updated_by_id=current_user.id,
-            version=Supplier.version + 1,
-        )
-        .returning(Supplier)
-    )
-
-    result = await db.execute(stmt)
-    supplier = result.scalar_one_or_none()
-
-    if not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Supplier was modified by another process. Refresh and retry.",
-        )
-
-    await emit_activity(
-        db=db,
-        user_id=current_user.id,
-        username=current_user.username,
-        code=ActivityCode.REACTIVATE_SUPPLIER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
-        target_name=supplier.name,
-    )
-
-    await db.commit()
-
     return _map_supplier(supplier)
