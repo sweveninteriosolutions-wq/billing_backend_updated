@@ -38,6 +38,7 @@ class SupplierOut(SupplierBase):
     updated_by_name: Optional[str]
 
     created_at: datetime
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
@@ -46,3 +47,7 @@ class SupplierOut(SupplierBase):
 class SupplierListData(BaseModel):
     total: int
     items: List[SupplierOut]
+
+
+class VersionPayload(BaseModel):
+    version: int

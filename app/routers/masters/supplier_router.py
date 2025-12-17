@@ -8,6 +8,7 @@ from app.schemas.masters.supplier_schemas import (
     SupplierUpdate,
     SupplierOut,
     SupplierListData,
+    VersionPayload,
 )
 from app.services.masters.supplier_service import (
     create_supplier,
@@ -99,14 +100,30 @@ async def update_supplier_api(
     return success_response("Supplier updated successfully", supplier)
 
 
-@router.delete("/{supplier_id}", response_model=APIResponse[SupplierOut])
+@router.patch(
+    "/{supplier_id}/deactivate",
+    response_model=APIResponse[SupplierOut],
+)
 async def deactivate_supplier_api(
     supplier_id: int,
-    payload: SupplierUpdate,
+    payload: VersionPayload,
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    logger.info("Deactivate supplier", extra={"supplier_id": supplier_id})
+    logger.info(
+        "Deactivate supplier",
+        extra={
+            "supplier_id": supplier_id,
+            "version": payload.version,
+            "actor_id": user.id,
+        },
+    )
 
-    supplier = await deactivate_supplier(db, supplier_id, payload, user)
+    supplier = await deactivate_supplier(
+        db=db,
+        supplier_id=supplier_id,
+        version=payload.version,
+        user=user,
+    )
+
     return success_response("Supplier deactivated successfully", supplier)

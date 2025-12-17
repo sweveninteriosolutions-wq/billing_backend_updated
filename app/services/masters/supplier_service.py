@@ -30,7 +30,7 @@ def generate_supplier_code(name: str, phone: Optional[str]) -> str:
     digits = re.sub(r"[^0-9]", "", phone or "")
     prefix_phone = digits[-3:] if len(digits) >= 3 else digits.zfill(3)
     unique_part = uuid.uuid4().hex[:6].upper()
-    return f"CUST-{prefix_name}{prefix_phone}-{unique_part}"
+    return f"SUP-{prefix_name}{prefix_phone}-{unique_part}"
 
 
 # =========================
@@ -45,25 +45,39 @@ def _map_supplier(supplier: Supplier) -> SupplierOut:
         phone=supplier.phone,
         email=supplier.email,
         address=supplier.address,
+
         is_active=not supplier.is_deleted,
         version=supplier.version,
 
         created_by=supplier.created_by_id,
         updated_by=supplier.updated_by_id,
         created_by_name=(
-            supplier.created_by.username if supplier.created_by else None
+            supplier.created_by.username
+            if getattr(supplier, "created_by", None)
+            else None
         ),
         updated_by_name=(
-            supplier.updated_by.username if supplier.updated_by else None
+            supplier.updated_by.username
+            if getattr(supplier, "updated_by", None)
+            else None
         ),
+
         created_at=supplier.created_at,
+        updated_at=supplier.updated_at,
     )
 
 
 # =========================
 # CREATE
 # =========================
-async def create_supplier(db: AsyncSession, payload: SupplierCreate, user):
+async def create_supplier(
+    db: AsyncSession,
+    payload: SupplierCreate,
+    user,
+):
+    # ------------------------------------
+    # Fast pre-check (UX optimization)
+    # ------------------------------------
     exists = await db.scalar(
         select(Supplier.id).where(
             Supplier.name == payload.name,
@@ -85,7 +99,16 @@ async def create_supplier(db: AsyncSession, payload: SupplierCreate, user):
     )
 
     db.add(supplier)
-    await db.flush()
+
+    try:
+        await db.flush()  # forces INSERT, catches constraint issues early
+    except IntegrityError:
+        await db.rollback()
+        raise AppException(
+            409,
+            "Supplier already exists",
+            ErrorCode.SUPPLIER_NAME_EXISTS,
+        )
 
     await emit_activity(
         db=db,
@@ -133,7 +156,12 @@ async def list_suppliers(
     query = select(Supplier).where(Supplier.is_deleted.is_(False))
 
     if search:
-        query = query.where(Supplier.name.ilike(f"%{search}%"))
+        search_term = (
+            search.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        query = query.where(Supplier.name.ilike(f"%{search_term}%", escape="\\"))
 
     sort_map = {
         "name": Supplier.name,
@@ -187,7 +215,24 @@ async def update_supplier(
 
     changes: list[str] = []
 
+    # ---------------------------
+    # DUPLICATE NAME CHECK (RESTORED)
+    # ---------------------------
     if payload.name and payload.name != current.name:
+        exists = await db.scalar(
+            select(Supplier.id).where(
+                Supplier.name == payload.name,
+                Supplier.id != supplier_id,
+                Supplier.is_deleted.is_(False),
+            )
+        )
+        if exists:
+            raise AppException(
+                409,
+                "Supplier name already exists",
+                ErrorCode.SUPPLIER_NAME_EXISTS,
+            )
+
         changes.append(f"name: '{current.name}' → '{payload.name}'")
 
     if payload.contact_person and payload.contact_person != current.contact_person:
@@ -196,13 +241,13 @@ async def update_supplier(
         )
 
     if payload.phone and payload.phone != current.phone:
-        changes.append("phone updated")
+        changes.append(f"phone: '{current.phone}' → '{payload.phone}'")
 
     if payload.email and payload.email != current.email:
-        changes.append("email updated")
+        changes.append(f"email: '{current.email}' → '{payload.email}'")
 
     if payload.address and payload.address != current.address:
-        changes.append("address updated")
+        changes.append(f"address: '{current.address}' → '{payload.address}'")
 
     if not changes:
         raise AppException(
@@ -251,20 +296,22 @@ async def update_supplier(
     return _map_supplier(supplier)
 
 
+
 # =========================
 # DEACTIVATE
 # =========================
 async def deactivate_supplier(
+    *,
     db: AsyncSession,
     supplier_id: int,
-    payload: SupplierUpdate,
+    version: int,
     user,
 ):
     stmt = (
         update(Supplier)
         .where(
             Supplier.id == supplier_id,
-            Supplier.version == payload.version,
+            Supplier.version == version,
             Supplier.is_deleted.is_(False),
         )
         .values(
@@ -281,7 +328,7 @@ async def deactivate_supplier(
     if not supplier:
         raise AppException(
             409,
-            "Supplier was modified by another process",
+            "Supplier was modified by another process or already deactivated",
             ErrorCode.SUPPLIER_VERSION_CONFLICT,
         )
 
