@@ -1,16 +1,23 @@
+# app/services/masters/product_service.py
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, asc, desc, update
-from fastapi import HTTPException, status
+from sqlalchemy import select, update, func, asc, desc, or_
+from sqlalchemy.exc import IntegrityError
 
 from app.models.masters.product_models import Product
 from app.schemas.masters.product_schemas import (
-    ProductCreateSchema,
-    ProductUpdateSchema,
-    ProductTableSchema,
+    ProductCreate,
+    ProductUpdate,
+    ProductOut,
+    ProductListData,
 )
+from app.core.exceptions import AppException
+from app.constants.error_codes import ErrorCode
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
+from app.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 ALLOWED_SORT_FIELDS = {
     "name": Product.name,
@@ -20,11 +27,8 @@ ALLOWED_SORT_FIELDS = {
 }
 
 
-# =====================================================
-# MAPPER
-# =====================================================
-def _map_product(product: Product) -> ProductTableSchema:
-    return ProductTableSchema(
+def _map_product(product: Product) -> ProductOut:
+    return ProductOut(
         id=product.id,
         sku=product.sku,
         name=product.name,
@@ -36,67 +40,79 @@ def _map_product(product: Product) -> ProductTableSchema:
         is_active=not product.is_deleted,
         version=product.version,
 
-        created_at=product.created_at,
-        updated_at=product.updated_at,
-
-        created_by_id=product.created_by_id,
-        updated_by_id=product.updated_by_id,
-
+        created_by=product.created_by_id,
+        updated_by=product.updated_by_id,
         created_by_name=product.created_by_username,
         updated_by_name=product.updated_by_username,
+
+        created_at=product.created_at,
+        updated_at=product.updated_at,
     )
 
 
-# =====================================================
-# CREATE PRODUCT
-# =====================================================
-async def create_product(
-    db: AsyncSession,
-    payload: ProductCreateSchema,
-    current_user,
-):
+# ---------------- CREATE ----------------
+async def create_product(db: AsyncSession, payload: ProductCreate, user):
     exists = await db.scalar(
-        select(Product.id)
-        .where(
+        select(Product.id).where(
             Product.sku == payload.sku,
             Product.is_deleted.is_(False),
         )
     )
     if exists:
-        raise HTTPException(
-            status_code=400,
-            detail="SKU already exists",
+        raise AppException(
+            409,
+            "SKU already exists",
+            ErrorCode.PRODUCT_SKU_EXISTS,
         )
 
     product = Product(
         **payload.model_dump(),
-        created_by_id=current_user.id,
-        updated_by_id=current_user.id,
+        created_by_id=user.id,
+        updated_by_id=user.id,
     )
 
     db.add(product)
 
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        # Check if the name already exists to provide a more specific error.
+        name_exists = await db.scalar(
+                select(Product.id).where(Product.name == payload.name, Product.is_deleted.is_(False))
+            )
+        if name_exists:
+            raise AppException(
+                    409,
+                    "Product name already exists",
+                    ErrorCode.PRODUCT_NAME_EXISTS,
+                )
+            # If not name, assume it was a race condition on SKU.
+        raise AppException(
+                409,
+                "SKU already exists",
+                ErrorCode.PRODUCT_SKU_EXISTS,
+            )
+
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.CREATE_PRODUCT,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=payload.name,
         sku=payload.sku,
     )
 
     await db.commit()
     await db.refresh(product)
-
     return _map_product(product)
 
 
-# =====================================================
-# LIST PRODUCTS
-# =====================================================
+# ---------------- LIST ----------------
 async def list_products(
+    *,
     db: AsyncSession,
     search: str | None,
     category: str | None,
@@ -108,10 +124,10 @@ async def list_products(
     sort_by: str,
     order: str,
 ):
-    base = select(Product).where(Product.is_deleted.is_(False))
+    query = select(Product).where(Product.is_deleted.is_(False))
 
     if search:
-        base = base.where(
+        query = query.where(
             or_(
                 Product.name.ilike(f"%{search}%"),
                 Product.sku.ilike(f"%{search}%"),
@@ -119,94 +135,128 @@ async def list_products(
         )
 
     if category:
-        base = base.where(Product.category == category)
+        query = query.where(Product.category == category)
 
     if supplier_id:
-        base = base.where(Product.supplier_id == supplier_id)
+        query = query.where(Product.supplier_id == supplier_id)
 
     if min_price is not None:
-        base = base.where(Product.price >= min_price)
+        query = query.where(Product.price >= min_price)
 
     if max_price is not None:
-        base = base.where(Product.price <= max_price)
+        query = query.where(Product.price <= max_price)
 
-    total = await db.scalar(
-        select(func.count()).select_from(base.subquery())
+    sort_col = ALLOWED_SORT_FIELDS.get(sort_by)
+    if not sort_col:
+        raise AppException(
+            400,
+            "Invalid sort field",
+            ErrorCode.VALIDATION_ERROR,
+        )
+
+    query = query.order_by(
+        desc(sort_col) if order == "desc" else asc(sort_col)
     )
 
-    sort_column = ALLOWED_SORT_FIELDS.get(sort_by, Product.created_at)
-    sort_expr = desc(sort_column) if order.lower() == "desc" else asc(sort_column)
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
 
     result = await db.execute(
-        base.order_by(sort_expr)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.offset((page - 1) * page_size).limit(page_size)
     )
 
-    products = result.scalars().all()
-
-    return total, [_map_product(p) for p in products]
-
-
-# =====================================================
-# GET PRODUCT
-# =====================================================
-async def get_product(
-    db: AsyncSession,
-    product_id: int,
-) -> ProductTableSchema:
-
-    product = await db.scalar(
-        select(Product).where(
-            Product.id == product_id,
-            Product.is_deleted.is_(False),
-        )
+    return ProductListData(
+        total=total or 0,
+        items=[_map_product(p) for p in result.scalars().all()],
     )
 
-    if not product:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found",
-        )
 
+# ---------------- GET ----------------
+async def get_product(db: AsyncSession, product_id: int):
+    product = await db.get(Product, product_id)
+    if not product or product.is_deleted:
+        raise AppException(
+            404,
+            "Product not found",
+            ErrorCode.PRODUCT_NOT_FOUND,
+        )
     return _map_product(product)
 
 
-# =====================================================
-# UPDATE PRODUCT (OPTIMISTIC LOCK)
-# =====================================================
+# ---------------- UPDATE ----------------
 async def update_product(
     db: AsyncSession,
     product_id: int,
-    payload: ProductUpdateSchema,
-    current_user,
+    payload: ProductUpdate,
+    user,
 ):
-    existing = await db.get(Product, product_id)
-    if not existing or existing.is_deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found",
+    current = await db.get(Product, product_id)
+    if not current or current.is_deleted:
+        raise AppException(
+            404,
+            "Product not found",
+            ErrorCode.PRODUCT_NOT_FOUND,
         )
 
     updates = payload.model_dump(exclude_unset=True, exclude={"version"})
     if not updates:
-        raise HTTPException(
-            status_code=400,
-            detail="No changes provided",
+        raise AppException(
+            400,
+            "No changes detected",
+            ErrorCode.VALIDATION_ERROR,
         )
 
+    # -------------------------------------------------
+    # UNIQUENESS CHECKS (SKU / NAME)
+    # -------------------------------------------------
+    if "sku" in updates and updates["sku"] != current.sku:
+        exists = await db.scalar(
+            select(Product.id).where(
+                Product.sku == updates["sku"],
+                Product.id != product_id,
+                Product.is_deleted.is_(False),
+            )
+        )
+        if exists:
+            raise AppException(
+                409,
+                "SKU already exists",
+                ErrorCode.PRODUCT_SKU_EXISTS,
+            )
+
+    if "name" in updates and updates["name"] != current.name:
+        exists = await db.scalar(
+            select(Product.id).where(
+                Product.name == updates["name"],
+                Product.id != product_id,
+                Product.is_deleted.is_(False),
+            )
+        )
+        if exists:
+            raise AppException(
+                409,
+                "Product name already exists",
+                ErrorCode.PRODUCT_NAME_EXISTS,
+            )
+
+    # -------------------------------------------------
+    # CHANGE TRACKING
+    # -------------------------------------------------
     changes: list[str] = []
     for field, new_value in updates.items():
-        old_value = getattr(existing, field)
+        old_value = getattr(current, field)
         if old_value != new_value:
             changes.append(f"{field}: {old_value} → {new_value}")
 
     if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="No actual changes detected",
+        raise AppException(
+            400,
+            "No actual changes detected",
+            ErrorCode.VALIDATION_ERROR,
         )
 
+    # -------------------------------------------------
+    # OPTIMISTIC UPDATE
+    # -------------------------------------------------
     stmt = (
         update(Product)
         .where(
@@ -217,7 +267,7 @@ async def update_product(
         .values(
             **updates,
             version=Product.version + 1,
-            updated_by_id=current_user.id,
+            updated_by_id=user.id,
         )
         .returning(Product)
     )
@@ -226,36 +276,32 @@ async def update_product(
     product = result.scalar_one_or_none()
 
     if not product:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Product was modified by another process",
+        raise AppException(
+            409,
+            "Product was modified by another process",
+            ErrorCode.PRODUCT_VERSION_CONFLICT,
         )
 
+    # -------------------------------------------------
+    # ACTIVITY LOG
+    # -------------------------------------------------
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.UPDATE_PRODUCT,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=product.name,
         changes=", ".join(changes),
     )
 
     await db.commit()
-
     return _map_product(product)
 
 
-# =====================================================
-# DEACTIVATE PRODUCT
-# =====================================================
-async def deactivate_product(
-    db: AsyncSession,
-    product_id: int,
-    version: int,
-    current_user,
-):
+# ---------------- DEACTIVATE ----------------
+async def deactivate_product(db: AsyncSession, product_id: int, version: int, user):
     stmt = (
         update(Product)
         .where(
@@ -266,7 +312,7 @@ async def deactivate_product(
         .values(
             is_deleted=True,
             version=Product.version + 1,
-            updated_by_id=current_user.id,
+            updated_by_id=user.id,
         )
         .returning(Product)
     )
@@ -275,46 +321,38 @@ async def deactivate_product(
     product = result.scalar_one_or_none()
 
     if not product:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Product was modified or already deleted",
+        raise AppException(
+            409,
+            "Product was modified or already deactivated",
+            ErrorCode.PRODUCT_VERSION_CONFLICT,
         )
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.DEACTIVATE_PRODUCT,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=product.name,
     )
 
     await db.commit()
-
     return _map_product(product)
 
 
-# =====================================================
-# REACTIVATE PRODUCT
-# =====================================================
-async def reactivate_product(
-    db: AsyncSession,
-    product_id: int,
-    version: int,
-    current_user,
-):
+# ---------------- REACTIVATE ----------------
+async def reactivate_product(db: AsyncSession, product_id: int, user):
     stmt = (
         update(Product)
         .where(
             Product.id == product_id,
-            Product.version == version,
             Product.is_deleted.is_(True),
         )
         .values(
             is_deleted=False,
             version=Product.version + 1,
-            updated_by_id=current_user.id,
+            updated_by_id=user.id,
         )
         .returning(Product)
     )
@@ -323,21 +361,21 @@ async def reactivate_product(
     product = result.scalar_one_or_none()
 
     if not product:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Product was modified or not deleted",
+        raise AppException(
+            409,
+            "Product was modified or not deactivated",
+            ErrorCode.PRODUCT_VERSION_CONFLICT,
         )
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.REACTIVATE_PRODUCT,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=product.name,
     )
 
     await db.commit()
-
     return _map_product(product)

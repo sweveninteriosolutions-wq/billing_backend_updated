@@ -10,7 +10,7 @@ class Product(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     id = Column(Integer, primary_key=True)
     sku = Column(String(50), nullable=False, unique=True, index=True)
     hsn_code = Column(String(20), nullable=True, index=True)
-    name = Column(String(255), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True, unique=True)
     category = Column(String(100), nullable=True, index=True)
     description = Column(String(500), nullable=True)
     price = Column(Numeric(12, 2), nullable=False)
