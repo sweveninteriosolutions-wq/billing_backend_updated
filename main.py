@@ -23,6 +23,7 @@ from app.core.error_handlers import (
 from app.core.exceptions import AppException
 
 from app.core.logging import setup_logging
+setup_logging()
 from app.middleware.request_logging import request_logging_middleware
 
 app = FastAPI(

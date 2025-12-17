@@ -8,7 +8,6 @@ from app.constants.error_codes import ErrorCode
 from app.core.exceptions import AppException
 import logging
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -45,17 +44,32 @@ async def validation_exception_handler(
 
 
 # -------------------------
-# HTTP EXCEPTIONS (fallback)
+# HTTP EXCEPTIONS (mapped)
 # -------------------------
+HTTP_STATUS_TO_ERROR_CODE = {
+    400: ErrorCode.VALIDATION_ERROR,
+    401: ErrorCode.UNAUTHORIZED,
+    403: ErrorCode.PERMISSION_DENIED,
+    404: ErrorCode.NOT_FOUND,
+    409: ErrorCode.CONFLICT,
+    422: ErrorCode.VALIDATION_ERROR,
+}
+
+
 async def http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ):
+    error_code = HTTP_STATUS_TO_ERROR_CODE.get(
+        exc.status_code,
+        ErrorCode.INTERNAL_ERROR,
+    )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "success": False,
             "message": exc.detail,
-            "error_code": ErrorCode.INTERNAL_ERROR,
+            "error_code": error_code,
             "details": None,
         },
     )
@@ -83,7 +97,7 @@ async def integrity_error_handler(
 # -------------------------
 # LAST RESORT
 # -------------------------
-async def unhandled_exception_handler(request, exc: Exception):
+async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception(
         "Unhandled exception",
         extra={

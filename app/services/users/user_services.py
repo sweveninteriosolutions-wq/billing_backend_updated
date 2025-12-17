@@ -115,31 +115,94 @@ async def get_user_by_id(db: AsyncSession, user_id: int):
 # =========================
 # UPDATE USER
 # =========================
-async def update_user(db: AsyncSession, user_id: int, payload: UserUpdateSchema, admin: User):
+async def update_user(
+    db: AsyncSession,
+    user_id: int,
+    payload: UserUpdateSchema,
+    admin: User,
+):
+    # -------------------------------------------------
+    # FETCH USER
+    # -------------------------------------------------
     user = await db.get(User, user_id)
     if not user:
         raise AppException(404, "User not found", ErrorCode.USER_NOT_FOUND)
 
-    values = {}
+    # -------------------------------------------------
+    # CAPTURE PREVIOUS STATE (FOR AUDIT)
+    # -------------------------------------------------
+    prev_email = user.username
+    prev_role = user.role
+    prev_is_active = user.is_active
 
+    values: dict = {}
+
+    # -------------------------------------------------
+    # EMAIL UPDATE
+    # -------------------------------------------------
     if payload.email and payload.email != user.username:
+        exists = await db.scalar(
+            select(User.id).where(
+                User.username == payload.email,
+                User.id != user_id,
+            )
+        )
+        if exists:
+            raise AppException(
+                400,
+                "Email already in use",
+                ErrorCode.USER_EMAIL_ALREADY_EXISTS,
+            )
+
         values["username"] = payload.email
+
+    # -------------------------------------------------
+    # PASSWORD UPDATE
+    # -------------------------------------------------
     if payload.password:
         values["password_hash"] = hash_password(payload.password)
-    if payload.role:
+
+    # -------------------------------------------------
+    # ROLE UPDATE
+    # -------------------------------------------------
+    if payload.role and payload.role != user.role:
         if payload.role not in ALLOWED_ROLES:
-            raise AppException(400, "Invalid role", ErrorCode.USER_ROLE_INVALID)
+            raise AppException(
+                400,
+                "Invalid role",
+                ErrorCode.USER_ROLE_INVALID,
+            )
         values["role"] = payload.role
-    if payload.is_active is not None:
+
+    # -------------------------------------------------
+    # ACTIVE STATUS UPDATE
+    # -------------------------------------------------
+    if payload.is_active is not None and payload.is_active != user.is_active:
         values["is_active"] = payload.is_active
 
+    # -------------------------------------------------
+    # NO-OP GUARD
+    # -------------------------------------------------
     if not values:
-        raise AppException(400, "No changes provided", ErrorCode.VALIDATION_ERROR)
+        raise AppException(
+            400,
+            "No changes provided",
+            ErrorCode.VALIDATION_ERROR,
+        )
 
+    # -------------------------------------------------
+    # OPTIMISTIC UPDATE
+    # -------------------------------------------------
     stmt = (
         update(User)
-        .where(User.id == user_id, User.version == payload.version)
-        .values(**values, version=User.version + 1)
+        .where(
+            User.id == user_id,
+            User.version == payload.version,
+        )
+        .values(
+            **values,
+            version=User.version + 1,
+        )
         .returning(User)
     )
 
@@ -147,19 +210,98 @@ async def update_user(db: AsyncSession, user_id: int, payload: UserUpdateSchema,
     updated_user = result.scalar_one_or_none()
 
     if not updated_user:
-        raise AppException(409, "Version conflict", ErrorCode.USER_VERSION_CONFLICT)
+        raise AppException(
+            409,
+            "User was modified by another process",
+            ErrorCode.USER_VERSION_CONFLICT,
+        )
 
+    # -------------------------------------------------
+    # ACTIVITY LOGGING (BEFORE COMMIT)
+    # -------------------------------------------------
+    if "username" in values:
+        await emit_activity(
+            db=db,
+            user_id=admin.id,
+            username=admin.username,
+            actor_role=admin.role.capitalize(),
+            actor_email=admin.username,
+            code=ActivityCode.UPDATE_USER_EMAIL,
+            target_email=prev_email,
+            new_email=updated_user.username,
+        )
+
+    if "password_hash" in values:
+        await emit_activity(
+            db=db,
+            user_id=admin.id,
+            username=admin.username,
+            actor_role=admin.role.capitalize(),
+            actor_email=admin.username,
+            code=ActivityCode.UPDATE_USER_PASSWORD,
+            target_email=updated_user.username,
+        )
+
+    if "role" in values:
+        await emit_activity(
+            db=db,
+            user_id=admin.id,
+            username=admin.username,
+            actor_role=admin.role.capitalize(),
+            actor_email=admin.username,
+            code=ActivityCode.UPDATE_USER_ROLE,
+            target_email=updated_user.username,
+            old_role=prev_role,
+            new_role=updated_user.role,
+        )
+
+    if "is_active" in values:
+        activity_code = (
+            ActivityCode.DEACTIVATE_USER
+            if not updated_user.is_active
+            else ActivityCode.REACTIVATE_USER
+        )
+        await emit_activity(
+            db=db,
+            user_id=admin.id,
+            username=admin.username,
+            actor_role=admin.role.capitalize(),
+            actor_email=admin.username,
+            code=activity_code,
+            target_email=updated_user.username,
+        )
+
+    # -------------------------------------------------
+    # COMMIT & RETURN
+    # -------------------------------------------------
     await db.commit()
     return UserDetailSchema.from_orm(updated_user)
-
 
 # =========================
 # DEACTIVATE USER
 # =========================
-async def deactivate_user(db: AsyncSession, user_id: int, version: int, admin: User):
+async def deactivate_user(
+    db: AsyncSession,
+    user_id: int,
+    version: int,
+    admin: User,
+):
+    logger.info(
+        "Deactivating user",
+        extra={
+            "target_user_id": user_id,
+            "requested_version": version,
+            "actor_id": admin.id,
+        },
+    )
+
     stmt = (
         update(User)
-        .where(User.id == user_id, User.version == version, User.is_active.is_(True))
+        .where(
+            User.id == user_id,
+            User.version == version,
+            User.is_active.is_(True),
+        )
         .values(is_active=False, version=User.version + 1)
         .returning(User)
     )
@@ -168,19 +310,64 @@ async def deactivate_user(db: AsyncSession, user_id: int, version: int, admin: U
     user = result.scalar_one_or_none()
 
     if not user:
-        raise AppException(409, "User already inactive", ErrorCode.CONFLICT)
+        logger.warning(
+            "User already inactive or version conflict",
+            extra={"target_user_id": user_id},
+        )
+        raise AppException(
+            409,
+            "User already inactive",
+            ErrorCode.CONFLICT,
+        )
+
+    await emit_activity(
+        db,
+        user_id=admin.id,
+        username=admin.username,
+        code=ActivityCode.DEACTIVATE_USER,
+        actor_role=admin.role,
+        actor_email=admin.username,
+        target_email=user.username,
+    )
 
     await db.commit()
+
+    logger.info(
+        "User deactivated successfully",
+        extra={
+            "target_user_id": user.id,
+            "new_version": user.version,
+        },
+    )
+
     return UserDetailSchema.from_orm(user)
 
 
 # =========================
 # REACTIVATE USER
 # =========================
-async def reactivate_user(db: AsyncSession, user_id: int, version: int, admin: User):
+async def reactivate_user(
+    db: AsyncSession,
+    user_id: int,
+    version: int,
+    admin: User,
+):
+    logger.info(
+        "Reactivating user",
+        extra={
+            "target_user_id": user_id,
+            "requested_version": version,
+            "actor_id": admin.id,
+        },
+    )
+
     stmt = (
         update(User)
-        .where(User.id == user_id, User.version == version, User.is_active.is_(False))
+        .where(
+            User.id == user_id,
+            User.version == version,
+            User.is_active.is_(False),
+        )
         .values(is_active=True, version=User.version + 1)
         .returning(User)
     )
@@ -189,16 +376,42 @@ async def reactivate_user(db: AsyncSession, user_id: int, version: int, admin: U
     user = result.scalar_one_or_none()
 
     if not user:
-        raise AppException(409, "User already active", ErrorCode.CONFLICT)
+        logger.warning(
+            "User already active or version conflict",
+            extra={"target_user_id": user_id},
+        )
+        raise AppException(
+            409,
+            "User already active",
+            ErrorCode.CONFLICT,
+        )
+
+    await emit_activity(
+        db,
+        user_id=admin.id,
+        username=admin.username,
+        code=ActivityCode.REACTIVATE_USER,
+        actor_role=admin.role,
+        actor_email=admin.username,
+        target_email=user.username,
+    )
 
     await db.commit()
+
+    logger.info(
+        "User reactivated successfully",
+        extra={
+            "target_user_id": user.id,
+            "new_version": user.version,
+        },
+    )
+
     return UserDetailSchema.from_orm(user)
 
 
 # =========================
 # DASHBOARD
 # =========================
-# app/services/users/user_services.py
 
 async def get_user_dashboard_stats(db: AsyncSession):
     result = await db.execute(

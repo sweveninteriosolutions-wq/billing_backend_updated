@@ -46,9 +46,9 @@ if IS_PRODUCTION and not DB_SSL_VERIFY:
 # =====================================================
 # JWT / AUTH
 # =====================================================
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if not JWT_SECRET_KEY:
-    raise ValueError("JWT_SECRET_KEY must be set")
+JWT_ACCESS_SECRET_KEY = os.getenv("JWT_ACCESS_SECRET_KEY")
+if not JWT_ACCESS_SECRET_KEY:
+    raise ValueError("JWT_ACCESS_SECRET_KEY must be set")
 
 JWT_ALGORITHM = "HS256"
 

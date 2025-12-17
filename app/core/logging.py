@@ -11,6 +11,10 @@ def setup_logging():
         {
             "version": 1,
             "disable_existing_loggers": False,
+
+            # -----------------
+            # FORMATTERS
+            # -----------------
             "formatters": {
                 "default": {
                     "format": (
@@ -27,13 +31,38 @@ def setup_logging():
                     ),
                 },
             },
+
+            # -----------------
+            # HANDLERS
+            # -----------------
             "handlers": {
                 "console": {
                     "class": "logging.StreamHandler",
                     "stream": sys.stdout,
                     "formatter": "default",
                 },
+                "access_console": {
+                    "class": "logging.StreamHandler",
+                    "stream": sys.stdout,
+                    "formatter": "access",
+                },
             },
+
+            # -----------------
+            # LOGGERS
+            # -----------------
+            "loggers": {
+                # Used by request_logging_middleware
+                "access": {
+                    "handlers": ["access_console"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+            },
+
+            # -----------------
+            # ROOT LOGGER
+            # -----------------
             "root": {
                 "level": LOG_LEVEL,
                 "handlers": ["console"],
