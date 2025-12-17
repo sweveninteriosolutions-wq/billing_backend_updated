@@ -1,48 +1,41 @@
-from fastapi import APIRouter, Depends, Query
+# app/api/routes/activity_routes.py
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
 from app.core.db import get_db
-from app.services.auth.activity_service import get_user_activities
-from app.schemas.auth.activity_schemas import (
-    UserActivityOut,
-    UserActivityListResponse,
-)
+from app.schemas.users.user_schemas import APIResponse
+from app.schemas.auth.activity_schemas import UserActivityFilters
+from app.services.auth.activity_service import list_user_activities
 from app.utils.check_roles import require_role
+from app.utils.response import success_response
+from app.utils.logger import get_logger
 
-router = APIRouter(
-    prefix="/activities",
-    tags=["User Activities"],
-)
+router = APIRouter(prefix="/activities", tags=["User Activities"])
+logger = get_logger(__name__)
 
 
-@router.get("/", response_model=UserActivityListResponse)
-async def list_user_activities(
+@router.get("/", response_model=APIResponse)
+async def list_user_activities_api(
+    filters: UserActivityFilters = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
-    user_id: Optional[int] = Query(None),
-    username: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    sort_by: str = Query("created_at"),
-    order: str = Query("desc"),
+    admin=Depends(require_role(["admin"])),
 ):
     """
-    Admin-only: View user activity logs
-    """
+    Admin-only endpoint to fetch user activity logs.
 
-    total, activities = await get_user_activities(
-        db=db,
-        user_id=user_id,
-        username=username,
-        page=page,
-        page_size=page_size,
-        sort_by=sort_by,
-        order=order,
+    Supports filtering by user ID or username, pagination,
+    and safe sorting on allowed fields. Returns paginated
+    audit logs for administrative review.
+    """
+    logger.info(
+        "List user activities requested",
+        extra=filters.dict(exclude_none=True),
     )
 
-    return {
-        "message": "User activities fetched successfully",
-        "total": total,
-        "data": activities,
-    }
+    result = await list_user_activities(db=db, filters=filters)
+
+    return success_response(
+        "User activities fetched successfully",
+        result,
+    )
