@@ -219,7 +219,7 @@ async def deactivate_location(db: AsyncSession, location_id: int, user):
         raise AppException(
             409,
             "Location already inactive or missing",
-            ErrorCode.LOCATION_STATE_INVALID,
+            ErrorCode.LOCATION_CANNOT_DEACTIVATE,
         )
 
     await emit_activity(
@@ -258,7 +258,7 @@ async def reactivate_location(db: AsyncSession, location_id: int, user):
         raise AppException(
             409,
             "Location already active or missing",
-            ErrorCode.LOCATION_STATE_INVALID,
+            ErrorCode.LOCATION_CANNOT_ACTIVATE,
         )
 
     await emit_activity(
