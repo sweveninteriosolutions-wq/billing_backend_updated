@@ -1,65 +1,157 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from fastapi import HTTPException, status
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+import hashlib
+import json
+from sqlalchemy.orm import aliased
+from datetime import datetime, timezone
+
+from app.core.exceptions import AppException
+from app.constants.error_codes import ErrorCode
+from app.constants.activity_codes import ActivityCode
+from app.constants.inventory_movement_type import InventoryMovementType
 
 from app.models.inventory.stock_transfer_models import StockTransfer
 from app.models.inventory.inventory_location_models import InventoryLocation
 from app.models.inventory.inventory_balance_models import InventoryBalance
-from app.constants.activity_codes import ActivityCode
-from app.utils.activity_helpers import emit_activity
-from app.services.inventory.inventory_movement_service import apply_inventory_movement
-from sqlalchemy import func
+from app.models.users.user_models import User
+from app.models.masters.product_models import Product
 from app.models.enums.stock_transfer_status import TransferStatus
-from app.constants.inventory_movement_type import InventoryMovementType
-from sqlalchemy.orm import noload
+
+from app.services.inventory.inventory_movement_service import apply_inventory_movement
+from app.utils.activity_helpers import emit_activity
+
+from app.schemas.inventory.stock_transfer_schemas import (
+    StockTransferCreateSchema,
+    StockTransferTableSchema,
+)
 
 
-async def create_stock_transfer(
-    db: AsyncSession,
+def generate_transfer_signature(
     *,
     product_id: int,
     quantity: int,
     from_location_id: int,
     to_location_id: int,
-    current_user,
-):
-    if quantity <= 0:
-        raise HTTPException(400, "Transfer quantity must be positive")
+) -> str:
+    payload = json.dumps(
+        {
+            "product_id": product_id,
+            "quantity": int(quantity),
+            "from": from_location_id,
+            "to": to_location_id,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
-    if from_location_id == to_location_id:
-        raise HTTPException(400, "Source and destination locations must differ")
 
-    # Validate locations
-    locations = await db.execute(
-        select(InventoryLocation)
+def _map_transfer(t: StockTransfer) -> StockTransferTableSchema:
+    return StockTransferTableSchema(
+        id=t.id,
+        product_id=t.product_id,
+        quantity=t.quantity,
+        from_location_id=t.from_location_id,
+        to_location_id=t.to_location_id,
+        status=t.status,
+        transferred_by_id=t.transferred_by_id,
+        transferred_by=t.transferred_by.username if t.transferred_by else None,
+        completed_by_id=t.completed_by_id,
+        completed_by=t.completed_by.username if t.completed_by else None,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+    )
+
+
+async def create_stock_transfer(
+    db: AsyncSession,
+    payload: StockTransferCreateSchema,
+    user: User,
+) -> StockTransferTableSchema:
+    if payload.from_location_id == payload.to_location_id:
+        raise AppException(
+            400,
+            "Source and destination locations must differ",
+            ErrorCode.STOCK_TRANSFER_INVALID_LOCATION,
+        )
+
+    product_exists = await db.scalar(
+        select(Product.id).where(
+            Product.id == payload.product_id,
+            Product.is_deleted.is_(False),
+        )
+    )
+
+    if not product_exists:
+        raise AppException(
+            400,
+            "Invalid or inactive product",
+            ErrorCode.STOCK_TRANSFER_INVALID_PRODUCT,
+        )
+
+    count = await db.scalar(
+        select(func.count())
+        .select_from(InventoryLocation)
         .where(
-            InventoryLocation.id.in_([from_location_id, to_location_id]),
+            InventoryLocation.id.in_(
+                [payload.from_location_id, payload.to_location_id]
+            ),
             InventoryLocation.is_active.is_(True),
+            InventoryLocation.is_deleted.is_(False),
         )
     )
-    if len(locations.scalars().all()) != 2:
-        raise HTTPException(400, "Invalid or inactive location")
 
-    # Validate stock availability (NO LOCK YET)
+    if count != 2:
+        raise AppException(
+            400,
+            "Invalid or inactive location",
+            ErrorCode.STOCK_TRANSFER_INVALID_LOCATION,
+        )
+
     balance = await db.scalar(
-        select(InventoryBalance.quantity)
-        .where(
-            InventoryBalance.product_id == product_id,
-            InventoryBalance.location_id == from_location_id,
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.product_id == payload.product_id,
+            InventoryBalance.location_id == payload.from_location_id,
         )
     )
-    if balance is None or balance < quantity:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Insufficient stock at source location",
+
+    if balance is None or balance < payload.quantity:
+        raise AppException(
+            409,
+            "Insufficient stock at source location",
+            ErrorCode.STOCK_TRANSFER_INSUFFICIENT_STOCK,
+        )
+
+    signature = generate_transfer_signature(
+        product_id=payload.product_id,
+        quantity=payload.quantity,
+        from_location_id=payload.from_location_id,
+        to_location_id=payload.to_location_id,
+    )
+
+    exists = await db.scalar(
+        select(StockTransfer.id).where(
+            StockTransfer.item_signature == signature,
+            StockTransfer.status == TransferStatus.pending,
+            StockTransfer.is_deleted.is_(False),
+        )
+    )
+
+    if exists:
+        raise AppException(
+            409,
+            "Duplicate pending stock transfer exists",
+            ErrorCode.STOCK_TRANSFER_DUPLICATE,
         )
 
     transfer = StockTransfer(
-        product_id=product_id,
-        quantity=quantity,
-        from_location_id=from_location_id,
-        to_location_id=to_location_id,
-        transferred_by_id=current_user.id,
+        product_id=payload.product_id,
+        quantity=payload.quantity,
+        from_location_id=payload.from_location_id,
+        to_location_id=payload.to_location_id,
+        transferred_by_id=user.id,
+        item_signature=signature,
     )
 
     db.add(transfer)
@@ -67,49 +159,49 @@ async def create_stock_transfer(
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.CREATE_STOCK_TRANSFER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=str(transfer.id),
     )
 
     await db.commit()
-    await db.refresh(transfer)
-    return transfer
+
+    await db.refresh(
+        transfer,
+        attribute_names=["transferred_by"],
+    )
+
+    return _map_transfer(transfer)
 
 
 async def complete_stock_transfer(
     db: AsyncSession,
     transfer_id: int,
-    current_user,
-):
-    # ------------------------------------
-    # 1. LOCK TRANSFER ROW (NO JOINS)
-    # ------------------------------------
-    result = await db.execute(
+    user: User,
+) -> StockTransferTableSchema:
+    transfer = await db.scalar(
         select(StockTransfer)
-        .options(noload("*"))  # 🔥 CRITICAL FIX
+        .options(selectinload(StockTransfer.transferred_by))
         .where(
             StockTransfer.id == transfer_id,
             StockTransfer.is_deleted.is_(False),
         )
         .with_for_update()
     )
-    transfer = result.scalar_one_or_none()
 
     if not transfer:
-        raise HTTPException(404, "Stock transfer not found")
+        raise AppException(404, "Stock transfer not found", ErrorCode.NOT_FOUND)
 
     if transfer.status != TransferStatus.pending:
-        raise HTTPException(
-            400, "Only pending transfers can be completed"
+        raise AppException(
+            400,
+            "Only pending transfers can be completed",
+            ErrorCode.STOCK_TRANSFER_INVALID_STATUS,
         )
 
-    # ------------------------------------
-    # 2. INVENTORY MOVEMENTS (ATOMIC)
-    # ------------------------------------
     await apply_inventory_movement(
         db=db,
         product_id=transfer.product_id,
@@ -118,7 +210,7 @@ async def complete_stock_transfer(
         movement_type=InventoryMovementType.TRANSFER_OUT,
         reference_type="TRANSFER",
         reference_id=transfer.id,
-        actor_user=current_user,
+        actor_user=user,
     )
 
     await apply_inventory_movement(
@@ -129,118 +221,127 @@ async def complete_stock_transfer(
         movement_type=InventoryMovementType.TRANSFER_IN,
         reference_type="TRANSFER",
         reference_id=transfer.id,
-        actor_user=current_user,
+        actor_user=user,
     )
 
-    # ------------------------------------
-    # 3. UPDATE STATE
-    # ------------------------------------
     transfer.status = TransferStatus.completed
-    transfer.completed_by_id = current_user.id
-    transfer.updated_by_id = current_user.id
+    transfer.completed_by_id = user.id
+    transfer.updated_by_id = user.id
+    transfer.updated_at = datetime.now(timezone.utc)
 
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.COMPLETE_STOCK_TRANSFER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=str(transfer.id),
     )
 
     await db.commit()
 
-    # ------------------------------------
-    # 4. OPTIONAL REFRESH (NO LOCK)
-    # ------------------------------------
-    await db.refresh(transfer)
+    await db.refresh(
+        transfer,
+        attribute_names=["transferred_by", "completed_by"],
+    )
 
-    return transfer
+    return _map_transfer(transfer)
 
-from sqlalchemy import select
-from sqlalchemy.orm import noload
 
 async def cancel_stock_transfer(
     db: AsyncSession,
     transfer_id: int,
-    current_user,
-):
-    # ------------------------------------
-    # 1. LOCK TRANSFER ROW (NO JOINS)
-    # ------------------------------------
-    result = await db.execute(
+    user: User,
+) -> StockTransferTableSchema:
+    transfer = await db.scalar(
         select(StockTransfer)
-        .options(noload("*"))  # 🔥 CRITICAL
+        .options(selectinload(StockTransfer.transferred_by))
         .where(
             StockTransfer.id == transfer_id,
             StockTransfer.is_deleted.is_(False),
         )
         .with_for_update()
     )
-    transfer = result.scalar_one_or_none()
 
     if not transfer:
-        raise HTTPException(404, "Stock transfer not found")
+        raise AppException(404, "Stock transfer not found", ErrorCode.NOT_FOUND)
 
     if transfer.status != TransferStatus.pending:
-        raise HTTPException(
-            400, "Only pending transfers can be cancelled"
+        raise AppException(
+            400,
+            "Only pending transfers can be cancelled",
+            ErrorCode.STOCK_TRANSFER_INVALID_STATUS,
         )
 
-    # ------------------------------------
-    # 2. STATE CHANGE
-    # ------------------------------------
     transfer.status = TransferStatus.cancelled
-    transfer.updated_by_id = current_user.id
+    transfer.completed_by_id = user.id
+    transfer.updated_by_id = user.id
+    transfer.updated_at = datetime.now(timezone.utc)
 
-    # ------------------------------------
-    # 3. ACTIVITY LOG (NO COMMIT HERE)
-    # ------------------------------------
     await emit_activity(
         db=db,
-        user_id=current_user.id,
-        username=current_user.username,
+        user_id=user.id,
+        username=user.username,
         code=ActivityCode.CANCEL_STOCK_TRANSFER,
-        actor_role=current_user.role.capitalize(),
-        actor_email=current_user.username,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
         target_name=str(transfer.id),
     )
 
-    # ------------------------------------
-    # 4. COMMIT ATOMICALLY
-    # ------------------------------------
     await db.commit()
 
-    # Optional: refresh for clean response
-    await db.refresh(transfer)
+    await db.refresh(
+        transfer,
+        attribute_names=["transferred_by", "completed_by"],
+    )
 
-    return transfer
+    return _map_transfer(transfer)
 
-from sqlalchemy import select
-from sqlalchemy.orm import noload
 
 async def get_stock_transfer(
     db: AsyncSession,
     transfer_id: int,
-):
-    result = await db.execute(
-        select(StockTransfer)
-        .options(noload("*"))  # 🔥 NO JOINS
-        .where(
-            StockTransfer.id == transfer_id,
-            StockTransfer.is_deleted.is_(False),
-        )
+) -> StockTransferTableSchema:
+
+    TransferredUser = aliased(User)
+    CompletedUser = aliased(User)
+
+    stmt = select(
+        StockTransfer.id,
+        StockTransfer.product_id,
+        StockTransfer.quantity,
+        StockTransfer.from_location_id,
+        StockTransfer.to_location_id,
+        StockTransfer.status,
+        StockTransfer.transferred_by_id,
+        (
+            select(TransferredUser.username)
+            .where(TransferredUser.id == StockTransfer.transferred_by_id)
+            .scalar_subquery()
+        ).label("transferred_by"),
+        StockTransfer.completed_by_id,
+        (
+            select(CompletedUser.username)
+            .where(CompletedUser.id == StockTransfer.completed_by_id)
+            .scalar_subquery()
+        ).label("completed_by"),
+        StockTransfer.created_at,
+        StockTransfer.updated_at,
+    ).where(
+        StockTransfer.id == transfer_id,
+        StockTransfer.is_deleted.is_(False),
     )
-    transfer = result.scalar_one_or_none()
 
-    if not transfer:
-        raise HTTPException(404, "Stock transfer not found")
+    row = (await db.execute(stmt)).first()
+    if not row:
+        raise AppException(
+            404,
+            "Stock transfer not found",
+            ErrorCode.NOT_FOUND,
+        )
 
-    return transfer
-
-from sqlalchemy import select, func, desc
-from sqlalchemy.orm import noload
+    return StockTransferTableSchema.from_orm(row)
 
 async def list_stock_transfers(
     db: AsyncSession,
@@ -252,41 +353,61 @@ async def list_stock_transfers(
     page: int,
     page_size: int,
 ):
-    base = (
-        select(StockTransfer)
-        .options(noload("*"))  # 🔥 ABSOLUTELY REQUIRED
-        .where(StockTransfer.is_deleted.is_(False))
-    )
+    TransferredUser = aliased(User)
+    CompletedUser = aliased(User)
+
+    filters = [StockTransfer.is_deleted.is_(False)]
 
     if product_id:
-        base = base.where(StockTransfer.product_id == product_id)
-
+        filters.append(StockTransfer.product_id == product_id)
     if status:
-        base = base.where(StockTransfer.status == status)
-
+        filters.append(StockTransfer.status == status)
     if from_location_id:
-        base = base.where(
-            StockTransfer.from_location_id == from_location_id
-        )
-
+        filters.append(StockTransfer.from_location_id == from_location_id)
     if to_location_id:
-        base = base.where(
-            StockTransfer.to_location_id == to_location_id
-        )
+        filters.append(StockTransfer.to_location_id == to_location_id)
 
-    # ---- COUNT (NO ORDER BY) ----
+    # -----------------------------
+    # COUNT (FAST, NO ORDER BY)
+    # -----------------------------
     total = await db.scalar(
-        select(func.count()).select_from(base.subquery())
+        select(func.count()).select_from(StockTransfer).where(*filters)
     )
 
-    # ---- DATA ----
-    result = await db.execute(
-        base
+    # -----------------------------
+    # DATA (FLAT ROWS)
+    # -----------------------------
+    stmt = (
+        select(
+            StockTransfer.id,
+            StockTransfer.product_id,
+            StockTransfer.quantity,
+            StockTransfer.from_location_id,
+            StockTransfer.to_location_id,
+            StockTransfer.status,
+            StockTransfer.transferred_by_id,
+            (
+                select(TransferredUser.username)
+                .where(TransferredUser.id == StockTransfer.transferred_by_id)
+                .scalar_subquery()
+            ).label("transferred_by"),
+            StockTransfer.completed_by_id,
+            (
+                select(CompletedUser.username)
+                .where(CompletedUser.id == StockTransfer.completed_by_id)
+                .scalar_subquery()
+            ).label("completed_by"),
+            StockTransfer.created_at,
+            StockTransfer.updated_at,
+        )
+        .where(*filters)
         .order_by(StockTransfer.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
 
-    transfers = result.scalars().all()
+    rows = (await db.execute(stmt)).all()
 
-    return total or 0, transfers
+    data = [StockTransferTableSchema.from_orm(r) for r in rows]
+
+    return total or 0, data
