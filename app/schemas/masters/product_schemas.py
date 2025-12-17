@@ -6,11 +6,7 @@ from decimal import Decimal
 from datetime import datetime
 
 
-# -----------------------
-# REQUEST SCHEMAS
-# -----------------------
-
-class ProductCreateSchema(BaseModel):
+class ProductCreate(BaseModel):
     sku: str
     name: str
     category: Optional[str] = None
@@ -19,7 +15,7 @@ class ProductCreateSchema(BaseModel):
     supplier_id: Optional[int] = None
 
 
-class ProductUpdateSchema(BaseModel):
+class ProductUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
     price: Optional[Decimal] = Field(default=None, gt=0)
@@ -29,11 +25,7 @@ class ProductUpdateSchema(BaseModel):
     version: int
 
 
-# -----------------------
-# RESPONSE SCHEMAS
-# -----------------------
-
-class ProductTableSchema(BaseModel):
+class ProductOut(BaseModel):
     id: int
     sku: str
     name: str
@@ -45,25 +37,22 @@ class ProductTableSchema(BaseModel):
     is_active: bool
     version: int
 
+    created_by: Optional[int]
+    updated_by: Optional[int]
+    created_by_name: Optional[str]
+    updated_by_name: Optional[str]
+
     created_at: datetime
     updated_at: Optional[datetime]
-
-    created_by_id: Optional[int]
-    updated_by_id: Optional[int]
-
-    created_by_name: Optional[str]   
-    updated_by_name: Optional[str]   
 
     class Config:
         from_attributes = True
 
 
-class ProductResponseSchema(BaseModel):
-    msg: str
-    data: Optional[ProductTableSchema] = None
-
-
-class ProductListResponseSchema(BaseModel):
-    msg: str
+class ProductListData(BaseModel):
     total: int
-    data: List[ProductTableSchema]
+    items: List[ProductOut]
+
+
+class VersionPayload(BaseModel):
+    version: int
