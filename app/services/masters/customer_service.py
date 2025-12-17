@@ -17,16 +17,21 @@ from app.utils.activity_helpers import emit_activity
 from app.constants.activity_codes import ActivityCode
 from app.utils.logger import get_logger
 from typing import Optional
+from sqlalchemy.exc import IntegrityError
 import uuid
-
-def generate_customer_code() -> str:
-    return f"CUST-{uuid.uuid4().hex[:8].upper()}"
-
+import re
 
 logger = get_logger(__name__)
 
 
-# app/services/masters/customer_service.py
+def generate_customer_code(name: str, phone: Optional[str]) -> str:
+    clean_name = re.sub(r"[^A-Za-z]", "", name or "").upper()
+    prefix_name = clean_name[:3].ljust(3, "X")
+    digits = re.sub(r"[^0-9]", "", phone or "")
+    prefix_phone = digits[-3:] if len(digits) >= 3 else digits.zfill(3)
+    unique_part = uuid.uuid4().hex[:6].upper()
+    return f"CUST-{prefix_name}{prefix_phone}-{unique_part}"
+
 
 def _map_customer(customer: Customer) -> CustomerOut:
     return CustomerOut(
@@ -57,8 +62,6 @@ def _map_customer(customer: Customer) -> CustomerOut:
     )
 
 
-
-
 # =========================
 # CREATE
 # =========================
@@ -73,8 +76,11 @@ async def create_customer(db: AsyncSession, payload: CustomerCreate, user):
             ErrorCode.CUSTOMER_EMAIL_EXISTS,
         )
 
+    # Try once (UUID collision is astronomically unlikely)
+    customer_code = generate_customer_code(payload.name, payload.phone)
+
     customer = Customer(
-        customer_code=generate_customer_code(),
+        customer_code=customer_code,
         name=payload.name,
         email=payload.email,
         phone=payload.phone,
@@ -83,9 +89,17 @@ async def create_customer(db: AsyncSession, payload: CustomerCreate, user):
         updated_by_id=user.id,
     )
 
-
     db.add(customer)
-    await db.flush()
+
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Only possible cause here is unique constraint violation
+        raise AppException(
+            409,
+            "Customer code already exists. Please retry.",
+            ErrorCode.CUSTOMER_CODE_EXISTS,
+        )
 
     await emit_activity(
         db=db,
@@ -190,10 +204,25 @@ async def update_customer(
         changes.append(f"email: '{current.email}' → '{payload.email}'")
 
     if payload.phone is not None and payload.phone != current.phone:
-        changes.append(f"phone updated")
+        old_phone = current.phone[-4:] if current.phone else "None"
+        new_phone = payload.phone[-4:]
+        changes.append(f"phone: ****{old_phone} → ****{new_phone}")
 
-    if payload.address is not None and payload.address != current.address:
-        changes.append("address updated")
+    if payload.address is not None:
+        old_address = current.address or {}
+        new_address = payload.address
+
+        changed_fields = [
+            key
+            for key in new_address
+            if new_address.get(key) != old_address.get(key)
+        ]
+
+        if changed_fields:
+            changes.append(
+                f"address fields updated: {', '.join(changed_fields)}"
+            )
+
 
     if payload.is_active is not None and payload.is_active != current.is_active:
         changes.append(
