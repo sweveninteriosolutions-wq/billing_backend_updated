@@ -11,7 +11,7 @@ async def expire_quotations_job():
     async with AsyncSessionLocal() as db:
         await auto_expire_quotations(db)
 
-@scheduler.scheduled_job("cron", hour=0, minute=5)  # daily @ 00:05
+@scheduler.scheduled_job("cron", hour=0, minute=10)  # daily @ 00:10
 async def discount_lifecycle_job():
     async with AsyncSessionLocal() as db:
         await auto_expire_discounts(db)

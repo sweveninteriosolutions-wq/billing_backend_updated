@@ -237,10 +237,12 @@ async def update_discount(
         .where(
             Discount.id == discount_id,
             Discount.is_deleted.is_(False),
+            Discount.version == payload.version,
         )
         .values(
             **data,
             updated_by_id=user.id,
+            version=Discount.version + 1,
         )
         .returning(Discount)
     )

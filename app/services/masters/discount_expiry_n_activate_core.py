@@ -1,4 +1,5 @@
 from sqlalchemy import update
+from datetime import date
 from app.models.masters.discount_models import Discount
 
 
@@ -23,11 +24,6 @@ def _expire_discount_stmt(*, today):
             Discount.code,
         )
     )
-
-from sqlalchemy import update
-from datetime import date
-from app.models.masters.discount_models import Discount
-
 
 def _activate_discount_stmt(*, today):
     """
