@@ -9,8 +9,8 @@ from datetime import datetime
 # ==============================
 class GRNItemCreateSchema(BaseModel):
     product_id: int
-    quantity: int = Field(gt=0)
-    unit_cost: Decimal = Field(ge=0)
+    quantity: int = Field(gt=0, description="Received quantity")
+    unit_cost: Decimal = Field(ge=0, description="Cost per unit")
 
 
 class GRNItemUpdateSchema(GRNItemCreateSchema):

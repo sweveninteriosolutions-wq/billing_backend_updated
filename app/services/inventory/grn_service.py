@@ -211,8 +211,8 @@ async def list_grns(
     *,
     supplier_id: int | None,
     status: str | None,
-    start_date,
-    end_date,
+    start_date: str | None,
+    end_date: str | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -391,7 +391,7 @@ async def update_grn(
         raise AppException(
             400,
             "No changes detected",
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.NO_CHANGES_DETECTED,
         )
 
     grn.version += 1
