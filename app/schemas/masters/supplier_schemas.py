@@ -3,7 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 
 
-class SupplierCreateSchema(BaseModel):
+class SupplierBase(BaseModel):
     name: str
     contact_person: Optional[str] = None
     phone: Optional[str] = None
@@ -11,49 +11,38 @@ class SupplierCreateSchema(BaseModel):
     address: Optional[str] = None
 
 
-class SupplierUpdateSchema(BaseModel):
+class SupplierCreate(SupplierBase):
+    pass
+
+
+class SupplierUpdate(BaseModel):
     name: Optional[str] = None
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     address: Optional[str] = None
     is_active: Optional[bool] = None
+
     version: int
 
 
-class SupplierTableSchema(BaseModel):
+class SupplierOut(SupplierBase):
     id: int
-    name: str
-    contact_person: str | None
-    phone: str | None
-    email: str | None
-    address: str | None
-
+    supplier_code: str
     is_active: bool
     version: int
 
-    created_at: datetime
-    updated_at: datetime | None
+    created_by: Optional[int]
+    updated_by: Optional[int]
+    created_by_name: Optional[str]
+    updated_by_name: Optional[str]
 
-    created_by_id: int | None
-    updated_by_id: int | None
-    created_by_name: str | None
-    updated_by_name: str | None
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-
-class SupplierResponseSchema(BaseModel):
-    msg: str
-    data: Optional[SupplierTableSchema] = None
-
-
-class SupplierListResponseSchema(BaseModel):
-    msg: str
+class SupplierListData(BaseModel):
     total: int
-    data: List[SupplierTableSchema]
-
-class VersionPayload(BaseModel):
-    version: int
+    items: List[SupplierOut]
