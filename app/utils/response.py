@@ -1,4 +1,11 @@
-def success_response(message: str, data=None):
+# app/utils/response.py
+
+from typing import TypeVar, Generic, Optional, Dict, Any
+
+T = TypeVar("T")
+
+
+def success_response(message: str, data: Optional[T] = None) -> Dict[str, Any]:
     return {
         "success": True,
         "message": message,

@@ -16,8 +16,6 @@ class UserActivityFilters(BaseModel):
     sort_order: str = Query("desc")
 
 
-# app/schemas/auth/activity_schemas.py
-
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime

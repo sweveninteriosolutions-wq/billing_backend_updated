@@ -21,6 +21,13 @@ async def list_user_activities_api(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_role(["admin"])),
 ):
+    """
+    Admin-only endpoint to fetch user activity logs.
+
+    Supports filtering by user ID or username, pagination,
+    and safe sorting on allowed fields. Returns paginated
+    audit logs for administrative review.
+    """
     logger.info(
         "List user activities requested",
         extra=filters.dict(exclude_none=True),
