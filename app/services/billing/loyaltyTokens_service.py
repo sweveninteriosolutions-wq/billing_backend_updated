@@ -1,14 +1,18 @@
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, asc, desc
 from sqlalchemy.orm import noload
-from fastapi import HTTPException
 
 from app.models.billing.loyaltyTokens_models import LoyaltyToken
 from app.schemas.billing.loyaltyTokens_schemas import (
     LoyaltyTokenOut,
-    LoyaltyTokenResponse,
-    LoyaltyTokenListResponse,
+    LoyaltyTokenListData,
 )
+
+from app.core.exceptions import AppException
+from app.constants.error_codes import ErrorCode
+
+logger = logging.getLogger(__name__)
 
 
 # =====================================================
@@ -19,31 +23,35 @@ def _map_token(token: LoyaltyToken) -> LoyaltyTokenOut:
 
 
 # =====================================================
-# GET BY ID
+# GET LOYALTY TOKEN BY ID
 # =====================================================
 async def get_loyalty_token(
     db: AsyncSession,
     token_id: int,
-) -> LoyaltyTokenResponse:
+) -> LoyaltyTokenOut:
+    logger.info("Get loyalty token", extra={"token_id": token_id})
 
     result = await db.execute(
         select(LoyaltyToken)
         .options(noload("*"))
-        .where(LoyaltyToken.id == token_id)
+        .where(
+            LoyaltyToken.id == token_id,
+        )
     )
+
     token = result.scalar_one_or_none()
-
     if not token:
-        raise HTTPException(404, "Loyalty token not found")
+        raise AppException(
+            404,
+            "Loyalty token not found",
+            ErrorCode.LOYALTY_TOKEN_NOT_FOUND,
+        )
 
-    return LoyaltyTokenResponse(
-        message="Loyalty token retrieved successfully",
-        data=_map_token(token),
-    )
+    return _map_token(token)
 
 
 # =====================================================
-# LIST TOKENS (GLOBAL FILTERS)
+# LIST LOYALTY TOKENS
 # =====================================================
 async def list_loyalty_tokens(
     db: AsyncSession,
@@ -56,11 +64,27 @@ async def list_loyalty_tokens(
     page_size: int,
     sort_by: str,
     order: str,
-) -> LoyaltyTokenListResponse:
+) -> LoyaltyTokenListData:
+    logger.info(
+        "List loyalty tokens",
+        extra={
+            "customer_id": customer_id,
+            "invoice_id": invoice_id,
+            "min_tokens": min_tokens,
+            "max_tokens": max_tokens,
+            "page": page,
+            "page_size": page_size,
+            "sort_by": sort_by,
+            "order": order,
+        },
+    )
 
+    # -------------------------------
+    # BASE QUERY
+    # -------------------------------
     base_query = (
         select(LoyaltyToken)
-        .options(noload("*"))  # 🔥 critical for performance
+        .options(noload("*"))
     )
 
     if customer_id:
@@ -75,31 +99,33 @@ async def list_loyalty_tokens(
     if max_tokens is not None:
         base_query = base_query.where(LoyaltyToken.tokens <= max_tokens)
 
-    # ---- COUNT (no ORDER BY) ----
+    # -------------------------------
+    # COUNT (NO SORT)
+    # -------------------------------
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())
     )
 
-    # ---- SORTING ----
+    # -------------------------------
+    # SORT + PAGINATION
+    # -------------------------------
     sort_map = {
         "created_at": LoyaltyToken.created_at,
         "tokens": LoyaltyToken.tokens,
     }
     sort_col = sort_map.get(sort_by, LoyaltyToken.created_at)
 
-    query = base_query.order_by(
-        asc(sort_col) if order.lower() == "asc" else desc(sort_col)
+    stmt = (
+        base_query
+        .order_by(asc(sort_col) if order.lower() == "asc" else desc(sort_col))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
 
-    # ---- PAGINATION ----
-    result = await db.execute(
-        query.offset((page - 1) * page_size).limit(page_size)
-    )
-
+    result = await db.execute(stmt)
     tokens = result.scalars().all()
 
-    return LoyaltyTokenListResponse(
-        message="Loyalty tokens retrieved successfully",
+    return LoyaltyTokenListData(
         total=total or 0,
-        data=[_map_token(t) for t in tokens],
+        items=[_map_token(t) for t in tokens],
     )
