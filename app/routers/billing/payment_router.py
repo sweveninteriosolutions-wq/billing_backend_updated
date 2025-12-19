@@ -33,7 +33,7 @@ router = APIRouter(
 async def get_payment_api(
     payment_id: int,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(["admin", "billing"])),
+    _=Depends(require_role(["admin", "billing"])),
 ):
     payment = await get_payment(db, payment_id)
     return success_response("Payment retrieved successfully", payment)
@@ -48,7 +48,7 @@ async def get_payment_api(
 )
 async def list_payments_api(
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(["admin", "billing"])),
+    _=Depends(require_role(["admin", "billing"])),
 
     invoice_id: int | None = Query(None),
     customer_id: int | None = Query(None),
