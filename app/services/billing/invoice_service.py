@@ -158,25 +158,51 @@ def _map_invoice(invoice: Invoice) -> InvoiceOut:
 
 
 async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> InvoiceOut:
-    customer = await db.get(Customer, payload.customer_id)
-    if not customer or not customer.is_active:
+    result = await db.execute(
+        select(
+            Customer.id,
+            Customer.name,
+            Customer.email,
+            Customer.phone,
+        )
+        .where(
+            Customer.id == payload.customer_id,
+            Customer.is_active.is_(True),
+        )
+    )
+    customer = result.first()
+
+    if not customer:
         raise AppException(404, "Customer not found", ErrorCode.CUSTOMER_NOT_FOUND)
+
 
     quotation = None
     if payload.quotation_id:
-        quotation = await db.get(Quotation, payload.quotation_id)
-        if not quotation or quotation.is_deleted:
+        result = await db.execute(
+            select(
+                Quotation.id,
+                Quotation.status,
+            )
+            .where(
+                Quotation.id == payload.quotation_id,
+                Quotation.is_deleted.is_(False),
+            )
+        )
+        quotation = result.first()
+
+        if not quotation:
             raise AppException(404, "Quotation not found", ErrorCode.QUOTATION_NOT_FOUND)
 
-        if quotation.status in {
+        if quotation.status in (
             QuotationStatus.cancelled,
             QuotationStatus.expired,
-        }:
+        ):
             raise AppException(
                 400,
                 "Quotation not eligible for invoicing",
                 ErrorCode.QUOTATION_INVALID_STATE,
             )
+
 
     gross = Decimal("0.00")
     items: list[InvoiceItem] = []
@@ -198,8 +224,26 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
     if gross <= 0:
         raise AppException(400, "Invoice must have positive total", ErrorCode.VALIDATION_ERROR)
 
+    exists = await db.scalar(
+        select(1)
+        .where(
+            Invoice.customer_id == customer.id,
+            Invoice.item_signature == _generate_item_signature(items),
+            Invoice.is_deleted.is_(False),
+        )
+    )
+
+    if exists:
+        raise AppException(
+            409,
+            "Duplicate invoice detected for same customer and items",
+            ErrorCode.DUPLICATE_INVOICE,
+        )
+    
+
+
     invoice = Invoice(
-        invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{os.urandom(2).hex().upper()}",
         customer_id=customer.id,
         quotation_id=payload.quotation_id,
         customer_snapshot={
@@ -441,7 +485,10 @@ async def apply_discount(
     user,
 ) -> InvoiceOut:
 
-    invoice = await db.get(Invoice, invoice_id)
+    result = await db.execute(
+        select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+    )
+    invoice = result.scalar_one_or_none()
     if not invoice or invoice.is_deleted:
         raise AppException(404, "Invoice not found", ErrorCode.INVOICE_NOT_FOUND)
 
@@ -453,6 +500,18 @@ async def apply_discount(
     invoice.balance_due = invoice.net_amount - invoice.total_paid
     invoice.version += 1
     invoice.updated_by_id = user.id
+
+    await emit_activity(
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.APPLY_DISCOUNT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=invoice.invoice_number,
+        new_value=str(payload.discount_amount),
+    )
+
 
     await db.commit()
     await db.refresh(invoice)
@@ -491,6 +550,17 @@ async def add_payment(
         else InvoiceStatus.partially_paid
     )
     invoice.updated_by_id = user.id
+
+    await emit_activity(
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.ADD_PAYMENT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=invoice.invoice_number,
+        amount=payload.amount,
+    )
 
     await db.commit()
     return PaymentOut.model_validate(payment)

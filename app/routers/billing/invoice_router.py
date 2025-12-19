@@ -76,7 +76,6 @@ async def list_invoices_api(
     user=Depends(require_role(["admin", "cashier"])),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, le=100),
-    include_total: bool = Query(False),
 ):
     data = await list_invoices(
         db=db,

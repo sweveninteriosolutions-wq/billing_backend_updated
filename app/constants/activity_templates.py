@@ -134,8 +134,8 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.VERIFY_INVOICE:
         "{actor_role} ({actor_email}) verified invoice {target_name}",
 
-    ActivityCode.PARTIAL_PAYMENT:
-        "Invoice {target_name} received partial payment of ₹{amount}",
+    ActivityCode.ADD_PAYMENT:
+        "Invoice {target_name} received payment of ₹{amount}",
 
     ActivityCode.MARK_PAID:
         "Invoice {target_name} marked as fully paid",
