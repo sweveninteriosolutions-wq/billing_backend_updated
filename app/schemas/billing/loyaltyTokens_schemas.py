@@ -1,9 +1,11 @@
 from pydantic import BaseModel
-from decimal import Decimal
 from datetime import datetime
 from typing import List
 
 
+# =========================
+# OUT
+# =========================
 class LoyaltyTokenOut(BaseModel):
     id: int
     customer_id: int
@@ -11,16 +13,12 @@ class LoyaltyTokenOut(BaseModel):
     tokens: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
-class LoyaltyTokenResponse(BaseModel):
-    message: str
-    data: LoyaltyTokenOut
-
-
-class LoyaltyTokenListResponse(BaseModel):
-    message: str
+# =========================
+# LIST DATA
+# =========================
+class LoyaltyTokenListData(BaseModel):
     total: int
-    data: List[LoyaltyTokenOut]
+    items: List[LoyaltyTokenOut]
