@@ -117,7 +117,7 @@ async def list_loyalty_tokens(
 
     stmt = (
         base_query
-        .order_by(asc(sort_col) if order == "asc" else desc(sort_col))
+        .order_by(asc(sort_col) if order.lower() == "asc" else desc(sort_col))
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
