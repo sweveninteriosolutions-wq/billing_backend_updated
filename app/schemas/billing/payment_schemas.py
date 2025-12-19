@@ -1,12 +1,12 @@
 from pydantic import BaseModel
-from datetime import datetime, date
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
 
-# =====================================================
+# =========================
 # OUT
-# =====================================================
+# =========================
 class PaymentOut(BaseModel):
     id: int
     invoice_id: int
@@ -14,18 +14,12 @@ class PaymentOut(BaseModel):
     payment_method: Optional[str]
     created_at: datetime
 
-    model_config = {
-        "from_attributes": True
-    }
-# =====================================================
-# RESPONSE WRAPPERS
-# =====================================================
-class PaymentResponse(BaseModel):
-    message: str
-    data: PaymentOut
+    model_config = {"from_attributes": True}
 
 
-class PaymentListResponse(BaseModel):
-    message: str
+# =========================
+# LIST DATA
+# =========================
+class PaymentListData(BaseModel):
     total: int
-    data: list[PaymentOut]
+    items: List[PaymentOut]
