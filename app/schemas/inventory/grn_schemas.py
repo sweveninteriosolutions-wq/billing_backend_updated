@@ -17,14 +17,13 @@ class GRNItemUpdateSchema(GRNItemCreateSchema):
     pass
 
 
-class GRNItemTableSchema(BaseModel):
+class GRNItemOutSchema(BaseModel):
     product_id: int
     quantity: int
     unit_cost: Decimal
 
-
 # ==============================
-# GRN SCHEMAS
+# GRN INPUT SCHEMAS
 # ==============================
 class GRNCreateSchema(BaseModel):
     supplier_id: int
@@ -42,10 +41,14 @@ class GRNUpdateSchema(BaseModel):
     bill_number: Optional[str] = None
     notes: Optional[str] = None
     items: Optional[List[GRNItemUpdateSchema]] = None
+
+    # optimistic locking
     version: int
 
-
-class GRNTableSchema(BaseModel):
+# ==============================
+# GRN OUTPUT SCHEMAS
+# ==============================
+class GRNOutSchema(BaseModel):
     id: int
     supplier_id: Optional[int]
     location_id: int
@@ -63,18 +66,35 @@ class GRNTableSchema(BaseModel):
     created_by_name: Optional[str]
     updated_by_name: Optional[str]
 
-    items: List[GRNItemTableSchema]
+    items: List[GRNItemOutSchema]
 
     class Config:
         from_attributes = True
 
 
-class GRNResponseSchema(BaseModel):
-    message: str
-    data: GRNTableSchema
+
+from pydantic import BaseModel
+from typing import List, Optional
+from decimal import Decimal
+from datetime import datetime
 
 
-class GRNListResponseSchema(BaseModel):
-    message: str
+# ==============================
+# GRN LIST ITEM (SUMMARY)
+# ==============================
+class GRNSummarySchema(BaseModel):
+    grn_code: int
+    supplier_name: str
+    purchase_order: Optional[str]
+    no_of_items: int
+    total_grn_value: Decimal
+    created_at: datetime
+    status: str
+
+
+# ==============================
+# GRN LIST DATA
+# ==============================
+class GRNListData(BaseModel):
     total: int
-    data: List[GRNTableSchema]
+    items: List[GRNSummarySchema]

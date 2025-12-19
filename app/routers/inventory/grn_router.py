@@ -3,12 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.utils.check_roles import require_role
+from app.utils.response import success_response, APIResponse
 
 from app.schemas.inventory.grn_schemas import (
     GRNCreateSchema,
     GRNUpdateSchema,
-    GRNResponseSchema,
-    GRNListResponseSchema,
+    GRNOutSchema,
+    GRNListData,
+
 )
 
 from app.services.inventory.grn_service import (
@@ -18,34 +20,34 @@ from app.services.inventory.grn_service import (
     update_grn,
     verify_grn,
     delete_grn,
+    list_grns_summary
 )
 
-router = APIRouter(prefix="/grns", tags=["GRN"])
+router = APIRouter(
+    prefix="/grns",
+    tags=["GRN"],
+)
 
-
-# =====================================================
+# =========================
 # CREATE
-# =====================================================
-@router.post("/", response_model=GRNResponseSchema)
+# =========================
+@router.post("/", response_model=APIResponse[GRNOutSchema])
 async def create_grn_api(
     payload: GRNCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 ):
-    grn = await create_grn(db, payload, current_user)
-    return {
-        "message": "GRN created successfully",
-        "data": grn,
-    }
+    grn = await create_grn(db, payload, user)
+    return success_response("GRN created successfully", grn)
 
 
-# =====================================================
+# =========================
 # LIST
-# =====================================================
-@router.get("/", response_model=GRNListResponseSchema)
+# =========================
+@router.get("/", response_model=APIResponse[GRNListData])
 async def list_grns_api(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 
     supplier_id: int | None = Query(None),
     status: str | None = Query(None),
@@ -58,7 +60,7 @@ async def list_grns_api(
     sort_by: str = Query("created_at"),
     order: str = Query("desc"),
 ):
-    total, data = await list_grns(
+    data = await list_grns_summary(
         db=db,
         supplier_id=supplier_id,
         status=status,
@@ -69,74 +71,58 @@ async def list_grns_api(
         sort_by=sort_by,
         order=order,
     )
-
-    return {
-        "message": "GRNs fetched successfully",
-        "total": total,
-        "data": data,
-    }
+    return success_response("GRNs fetched successfully", data)
 
 
-# =====================================================
+
+# =========================
 # GET BY ID
-# =====================================================
-@router.get("/{grn_id}", response_model=GRNResponseSchema)
+# =========================
+@router.get("/{grn_id}", response_model=APIResponse[GRNOutSchema])
 async def get_grn_api(
     grn_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 ):
     grn = await get_grn(db, grn_id)
-    return {
-        "message": "GRN fetched successfully",
-        "data": grn,
-    }
+    return success_response("GRN fetched successfully", grn)
 
 
-# =====================================================
+# =========================
 # UPDATE (DRAFT ONLY)
-# =====================================================
-@router.patch("/{grn_id}", response_model=GRNResponseSchema)
+# =========================
+@router.patch("/{grn_id}", response_model=APIResponse[GRNOutSchema])
 async def update_grn_api(
     grn_id: int,
     payload: GRNUpdateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "inventory"])),
+    user=Depends(require_role(["admin", "inventory"])),
 ):
-    grn = await update_grn(db, grn_id, payload, current_user)
-    return {
-        "message": "GRN updated successfully",
-        "data": grn,
-    }
+    grn = await update_grn(db, grn_id, payload, user)
+    return success_response("GRN updated successfully", grn)
 
 
-# =====================================================
+# =========================
 # VERIFY (STOCK IN)
-# =====================================================
-@router.post("/{grn_id}/verify", response_model=GRNResponseSchema)
+# =========================
+@router.post("/{grn_id}/verify", response_model=APIResponse[GRNOutSchema])
 async def verify_grn_api(
     grn_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    grn = await verify_grn(db, grn_id, current_user)
-    return {
-        "message": "GRN verified successfully",
-        "data": grn,
-    }
+    grn = await verify_grn(db, grn_id, user)
+    return success_response("GRN verified and stock updated", grn)
 
 
-# =====================================================
+# =========================
 # DELETE (SOFT DELETE, DRAFT ONLY)
-# =====================================================
-@router.delete("/{grn_id}", response_model=GRNResponseSchema)
+# =========================
+@router.delete("/{grn_id}", response_model=APIResponse[GRNOutSchema])
 async def delete_grn_api(
     grn_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    grn = await delete_grn(db, grn_id, current_user)
-    return {
-        "message": "GRN deleted successfully",
-        "data": grn,
-    }
+    grn = await delete_grn(db, grn_id, user)
+    return success_response("GRN deleted successfully", grn)
