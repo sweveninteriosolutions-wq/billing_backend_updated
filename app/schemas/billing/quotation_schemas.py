@@ -1,19 +1,18 @@
-# app/schemas/billing/quotation_schemas.py
-
 from pydantic import BaseModel
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime, date
 
-# ---------------- ITEM ----------------
 
 class QuotationItemCreate(BaseModel):
     product_id: int
     quantity: int
 
+
 class QuotationItemUpdate(BaseModel):
     product_id: int
     quantity: int
+
 
 class QuotationItemOut(BaseModel):
     id: int
@@ -23,14 +22,16 @@ class QuotationItemOut(BaseModel):
     unit_price: Decimal
     line_total: Decimal
 
-# ---------------- QUOTATION ----------------
 
 class QuotationCreate(BaseModel):
     customer_id: int
+    is_inter_state: bool
     items: List[QuotationItemCreate]
-    valid_until: Optional[date] = None
+    valid_until: date
     description: Optional[str] = None
     notes: Optional[str] = None
+
+
 
 class QuotationUpdate(BaseModel):
     description: Optional[str] = None
@@ -38,6 +39,7 @@ class QuotationUpdate(BaseModel):
     valid_until: Optional[date] = None
     items: Optional[List[QuotationItemUpdate]] = None
     version: int
+
 
 class QuotationOut(BaseModel):
     id: int
@@ -65,11 +67,18 @@ class QuotationOut(BaseModel):
 
     items: List[QuotationItemOut]
 
-class QuotationResponse(BaseModel):
-    message: str
-    data: QuotationOut
 
-class QuotationListResponse(BaseModel):
-    message: str
+class QuotationListItem(BaseModel):
+    id: int
+    quotation_number: str
+    customer_name: str
+    status: str
+    items_count: int
+    total_amount: Decimal
+    valid_until: Optional[date]
+
+
+class QuotationListData(BaseModel):
     total: int
-    data: List[QuotationOut]
+    items: List[QuotationListItem]
+
