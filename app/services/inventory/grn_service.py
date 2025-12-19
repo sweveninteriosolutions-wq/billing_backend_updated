@@ -277,8 +277,8 @@ async def create_grn(
         created_at=grn.created_at,
         created_by=grn.created_by_id,
         updated_by=grn.updated_by_id,
-        created_by_name=grn.created_by_username,
-        updated_by_name=grn.updated_by_username,
+        created_by_name=user.username,
+        updated_by_name=None,
         items=[
             {
                 "product_id": i.product_id,
@@ -439,6 +439,91 @@ async def list_grns(
         items=items,
     )
 
+from sqlalchemy import select, func
+from app.models.inventory.grn_models import GRN, GRNItem
+from app.models.masters.supplier_models import Supplier
+
+
+async def list_grns_summary(
+    db: AsyncSession,
+    *,
+    supplier_id: int | None,
+    status: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    order: str,
+):
+    filters = [GRN.is_deleted.is_(False)]
+
+    if supplier_id:
+        filters.append(GRN.supplier_id == supplier_id)
+
+    if status:
+        filters.append(GRN.status == status)
+
+    if start_date:
+        filters.append(GRN.created_at >= start_date)
+
+    if end_date:
+        filters.append(GRN.created_at <= end_date)
+
+    total = await db.scalar(
+        select(func.count())
+        .select_from(GRN)
+        .where(*filters)
+    )
+
+    order_col = GRN.created_at.desc() if order == "desc" else GRN.created_at.asc()
+
+    result = await db.execute(
+        select(
+            GRN.id.label("grn_code"),
+            Supplier.name.label("supplier_name"),
+            GRN.purchase_order,
+            func.count(GRNItem.id).label("no_of_items"),
+            func.coalesce(
+                func.sum(GRNItem.quantity * GRNItem.unit_cost), 0
+            ).label("total_grn_value"),
+            GRN.created_at,
+            GRN.status,
+        )
+        .join(Supplier, Supplier.id == GRN.supplier_id)
+        .outerjoin(GRNItem, GRNItem.grn_id == GRN.id)
+        .where(*filters)
+        .group_by(
+            GRN.id,
+            Supplier.name,
+            GRN.purchase_order,
+            GRN.created_at,
+            GRN.status,
+        )
+        .order_by(order_col)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    rows = result.all()
+
+    items = [
+        {
+            "grn_code": r.grn_code,
+            "supplier_name": r.supplier_name,
+            "purchase_order": r.purchase_order,
+            "no_of_items": r.no_of_items,
+            "total_grn_value": r.total_grn_value,
+            "created_at": r.created_at,
+            "status": r.status,
+        }
+        for r in rows
+    ]
+
+    return {
+        "total": total or 0,
+        "items": items,
+    }
 
 
 async def update_grn(
@@ -603,7 +688,8 @@ async def update_grn(
 
     await db.commit()
 
-    return _build_grn_out(grn, await _fetch_grn_items(db, grn.id))
+    return await get_grn(db, grn.id)
+
 
 async def verify_grn(
     db: AsyncSession,
@@ -693,4 +779,4 @@ async def delete_grn(
 
     await db.commit()
 
-    return _build_grn_out(grn, await _fetch_grn_items(db, grn.id))
+    return _build_grn_out(grn, grn.items)

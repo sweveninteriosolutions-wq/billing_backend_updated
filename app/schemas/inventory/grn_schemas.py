@@ -71,9 +71,30 @@ class GRNOutSchema(BaseModel):
     class Config:
         from_attributes = True
 
+
+
+from pydantic import BaseModel
+from typing import List, Optional
+from decimal import Decimal
+from datetime import datetime
+
+
+# ==============================
+# GRN LIST ITEM (SUMMARY)
+# ==============================
+class GRNSummarySchema(BaseModel):
+    grn_code: int
+    supplier_name: str
+    purchase_order: Optional[str]
+    no_of_items: int
+    total_grn_value: Decimal
+    created_at: datetime
+    status: str
+
+
 # ==============================
 # GRN LIST DATA
 # ==============================
 class GRNListData(BaseModel):
     total: int
-    items: List[GRNOutSchema]
+    items: List[GRNSummarySchema]

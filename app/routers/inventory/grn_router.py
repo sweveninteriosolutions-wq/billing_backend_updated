@@ -10,6 +10,7 @@ from app.schemas.inventory.grn_schemas import (
     GRNUpdateSchema,
     GRNOutSchema,
     GRNListData,
+
 )
 
 from app.services.inventory.grn_service import (
@@ -19,6 +20,7 @@ from app.services.inventory.grn_service import (
     update_grn,
     verify_grn,
     delete_grn,
+    list_grns_summary
 )
 
 router = APIRouter(
@@ -58,7 +60,7 @@ async def list_grns_api(
     sort_by: str = Query("created_at"),
     order: str = Query("desc"),
 ):
-    data = await list_grns(
+    data = await list_grns_summary(
         db=db,
         supplier_id=supplier_id,
         status=status,
@@ -70,6 +72,7 @@ async def list_grns_api(
         order=order,
     )
     return success_response("GRNs fetched successfully", data)
+
 
 
 # =========================
