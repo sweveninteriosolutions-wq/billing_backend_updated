@@ -96,8 +96,8 @@ async def get_quotation_api(
 async def list_quotations_api(
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin", "sales", "cashier"])),
-    customer_id: int | None = Query(None),
-    status: str | None = Query(None),
+    customer_id: int | None = Query(None, description="Filter by customer"),
+    status: str | None = Query(None, description="Filter by status (e.g., draft, approved)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),

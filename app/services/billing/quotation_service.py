@@ -127,10 +127,12 @@ async def _fetch_products_map(
     )
     products = {p.id: p for p in result.scalars()}
     if len(products) != len(product_ids):
+        missing_ids = product_ids - products.keys()
         raise AppException(
             404,
-            "Invalid product IDs",
+            f"Invalid or inactive product IDs: {list(missing_ids)}",
             ErrorCode.PRODUCT_NOT_FOUND,
+            details={"missing_ids": list(missing_ids)}
         )
     return products
 
@@ -305,13 +307,27 @@ async def list_quotations(
     if status:
         base_query = base_query.where(Quotation.status == status)
 
-    total = await db.scalar(
-        select(func.count()).select_from(
-            select(Quotation.id)
-            .where(Quotation.is_deleted.is_(False))
-            .subquery()
+    count_query = (
+        select(func.count(Quotation.id))
+        .join(Customer, Customer.id == Quotation.customer_id)
+        .where(
+            Quotation.is_deleted.is_(False),
+            Customer.is_active.is_(True),
         )
     )
+
+    if customer_id:
+        count_query = count_query.where(
+            Quotation.customer_id == customer_id
+        )
+
+    if status:
+        count_query = count_query.where(
+            Quotation.status == status
+        )
+
+    total = await db.scalar(count_query)
+
 
     sort_map = {
         "created_at": Quotation.created_at,
@@ -479,7 +495,7 @@ async def delete_quotation(
     version: int,
     user,
 ) -> QuotationOut:
-    q = await _get_quotation_with_items(db, quotation_id)
+    q = await _get_quotation_for_update(db, quotation_id)
 
     if q.status != QuotationStatus.draft:
         raise AppException(409, "Only draft quotations can be deleted", ErrorCode.QUOTATION_CANNOT_DELETE)
