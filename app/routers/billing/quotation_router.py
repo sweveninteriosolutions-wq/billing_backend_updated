@@ -1,15 +1,17 @@
-# app/routers/billing/quotation_router.py
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.utils.check_roles import require_role
+from app.utils.response import success_response, APIResponse
+
 from app.schemas.billing.quotation_schemas import (
     QuotationCreate,
     QuotationUpdate,
-    QuotationResponse,
-    QuotationListResponse,
+    QuotationOut,
+    QuotationListData,
 )
+
 from app.services.billing.quotation_service import (
     create_quotation,
     update_quotation,
@@ -17,171 +19,188 @@ from app.services.billing.quotation_service import (
     delete_quotation,
     get_quotation,
     list_quotations,
-    convert_quotation_to_invoice
+    convert_quotation_to_invoice,
 )
-from app.utils.check_roles import require_role
 
-router = APIRouter(prefix="/quotations", tags=["Quotations"])
+router = APIRouter(
+    prefix="/quotations",
+    tags=["Quotations"],
+)
 
 
-@router.post("/", response_model=QuotationResponse)
+@router.post(
+    "",
+    response_model=APIResponse[QuotationOut],
+)
 async def create_quotation_api(
     payload: QuotationCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "sales"])),
+    user=Depends(require_role(["admin", "sales"])),
 ):
-    return await create_quotation(db, payload, current_user)
+    quotation = await create_quotation(db, payload, user)
+    return success_response(
+        "Quotation created successfully",
+        quotation,
+    )
 
 
+@router.get(
+    "/ready_for_invoice",
+    response_model=APIResponse[QuotationListData],
+)
+async def list_quotations_ready_for_invoice_api(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(["admin", "sales", "cashier"])),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    order: str = Query("desc"),
+):
+    data = await list_quotations(
+        db=db,
+        status="converted_to_invoice",
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        order=order,
+    )
+    return success_response(
+        "Quotations ready for invoice retrieved successfully",
+        data,
+    )
 
-# =====================================================
-# GET SINGLE QUOTATION
-# =====================================================
 
 @router.get(
     "/{quotation_id}",
-    response_model=QuotationResponse,
+    response_model=APIResponse[QuotationOut],
 )
 async def get_quotation_api(
     quotation_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(
-        require_role(["admin", "sales", "cashier"])
-    ),
+    user=Depends(require_role(["admin", "sales", "cashier"])),
 ):
-    """
-    Fetch single quotation with items.
-    - Async safe
-    - Soft-deleted records excluded
-    """
-    return await get_quotation(
+    quotation = await get_quotation(
         db=db,
         quotation_id=quotation_id,
     )
-
-
-# =====================================================
-# LIST QUOTATIONS
-# =====================================================
-
-@router.get(
-    "/",
-    response_model=QuotationListResponse,
-)
-async def list_quotations_api(
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(
-        require_role(["admin", "sales", "cashier"])
-    ),
-
-    # -------- Filters --------
-    customer_id: int | None = Query(
-        None, description="Filter by customer"
-    ),
-    status: str | None = Query(
-        None, description="draft | approved | expired | cancelled"
-    ),
-
-    # -------- Pagination --------
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-
-    # -------- Sorting --------
-    sort_by: str = Query(
-        "created_at",
-        description="created_at | quotation_number",
-    ),
-    order: str = Query(
-        "desc",
-        description="asc | desc",
-    ),
-):
-    """
-    List quotations with pagination and filters.
-    """
-    return await list_quotations(
-        db=db,
-        customer_id=customer_id,
-        status=status,
-        limit=page_size,
-        offset=(page - 1) * page_size,
-        sort_by=sort_by,
-        order=order,
+    return success_response(
+        "Quotation retrieved successfully",
+        quotation,
     )
 
 
-@router.patch("/{quotation_id}", response_model=QuotationResponse)
+@router.get(
+    "/",
+    response_model=APIResponse[QuotationListData],
+)
+async def list_quotations_api(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_role(["admin", "sales", "cashier"])),
+    customer_id: int | None = Query(None, description="Filter by customer"),
+    status: str | None = Query(None, description="Filter by status (e.g., draft, approved)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    order: str = Query("desc"),
+):
+    data = await list_quotations(
+        db=db,
+        customer_id=customer_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        order=order,
+    )
+    return success_response(
+        "Quotations retrieved successfully",
+        data,
+    )
+
+
+@router.patch(
+    "/{quotation_id}",
+    response_model=APIResponse[QuotationOut],
+)
 async def update_quotation_api(
     quotation_id: int,
     payload: QuotationUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "sales"])),
+    user=Depends(require_role(["admin", "sales"])),
 ):
-    return await update_quotation(db, quotation_id, payload, current_user)
+    quotation = await update_quotation(
+        db=db,
+        quotation_id=quotation_id,
+        payload=payload,
+        user=user,
+    )
+    return success_response(
+        "Quotation updated successfully",
+        quotation,
+    )
 
 
-@router.post("/{quotation_id}/approve", response_model=QuotationResponse)
+@router.post(
+    "/{quotation_id}/approve",
+    response_model=APIResponse[QuotationOut],
+)
 async def approve_quotation_api(
     quotation_id: int,
     version: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    return await approve_quotation(db, quotation_id, version, current_user)
+    quotation = await approve_quotation(
+        db=db,
+        quotation_id=quotation_id,
+        version=version,
+        user=user,
+    )
+    return success_response(
+        "Quotation approved successfully",
+        quotation,
+    )
 
 
-@router.delete("/{quotation_id}", response_model=QuotationResponse)
+@router.delete(
+    "/{quotation_id}",
+    response_model=APIResponse[QuotationOut],
+)
 async def delete_quotation_api(
     quotation_id: int,
     version: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin"])),
+    user=Depends(require_role(["admin"])),
 ):
-    return await delete_quotation(db, quotation_id, version, current_user)
+    quotation = await delete_quotation(
+        db=db,
+        quotation_id=quotation_id,
+        version=version,
+        user=user,
+    )
+    return success_response(
+        "Quotation deleted successfully",
+        quotation,
+    )
 
-@router.post("/{quotation_id}/convert-to-invoice", response_model=QuotationResponse)
+
+@router.post(
+    "/{quotation_id}/convert-to-invoice",
+    response_model=APIResponse[QuotationOut],
+)
 async def convert_quotation_to_invoice_api(
     quotation_id: int,
     version: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_role(["admin", "sales", "cashier"])),
+    user=Depends(require_role(["admin", "sales", "cashier"])),
 ):
-    return await convert_quotation_to_invoice(
-        db,
-        quotation_id,
-        version,
-        current_user,
-    )
-
-@router.get("/ready_for_invoice", response_model=QuotationListResponse)
-async def list_quotations_ready_for_invoice_api(
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(
-        require_role(["admin", "sales", "cashier"])
-    ),
-
-    # -------- Pagination --------
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-
-    # -------- Sorting --------
-    sort_by: str = Query(
-        "created_at",
-        description="created_at | quotation_number",
-    ),
-    order: str = Query(
-        "desc",
-        description="asc | desc",
-    ),
-):
-    """
-    List quotations ready to be converted to invoice with pagination.
-    """
-    return await list_quotations(
+    quotation = await convert_quotation_to_invoice(
         db=db,
-        status="converted_to_invoice",
-        limit=page_size,
-        offset=(page - 1) * page_size,
-        sort_by=sort_by,
-        order=order,
+        quotation_id=quotation_id,
+        version=version,
+        user=user,
+    )
+    return success_response(
+        "Quotation converted to invoice successfully",
+        quotation,
     )

@@ -98,14 +98,22 @@ ACTIVITY_TEMPLATES = {
     # ---------------- QUOTATIONS ----------------
     ActivityCode.CREATE_QUOTATION:
     "{actor_role} ({actor_email}) created quotation {target_name}",
+
     ActivityCode.UPDATE_QUOTATION:
     "{actor_role} ({actor_email}) updated quotation {target_name}: {changes}",
+
     ActivityCode.APPROVE_QUOTATION:
     "{actor_role} ({actor_email}) approved quotation {target_name}",
+
     ActivityCode.CONVERT_QUOTATION_TO_INVOICE:
     "{actor_role} ({actor_email}) converted quotation {target_name} to invoice",
+
+    ActivityCode.DELETE_QUOTATION:
+    "{actor_role} ({actor_email}) deleted quotation {target_name}",
+
     ActivityCode.CANCEL_QUOTATION:
     "{actor_role} ({actor_email}) cancelled quotation {target_name}",
+
     ActivityCode.EXPIRE_QUOTATION:
     "{actor_role} ({actor_email}) expired quotation {target_name}: {changes}",
 
