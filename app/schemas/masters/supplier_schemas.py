@@ -21,7 +21,7 @@ class SupplierUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     address: Optional[str] = None
-    is_active: Optional[bool] = None
+    is_deleted: Optional[bool] = None
 
     version: int
 
@@ -29,7 +29,7 @@ class SupplierUpdate(BaseModel):
 class SupplierOut(SupplierBase):
     id: int
     supplier_code: str
-    is_active: bool
+    is_deleted: bool
     version: int
 
     created_by: Optional[int]
@@ -44,9 +44,32 @@ class SupplierOut(SupplierBase):
         from_attributes = True
 
 
+class SupplierListItem(BaseModel):
+    id: int
+    supplier_code: str
+    name: str
+    contact_person: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    gstin: Optional[str]
+    version: int
+
+    is_deleted: bool
+
+    created_by: Optional[int]
+    updated_by: Optional[int]
+    created_by_name: Optional[str]
+    updated_by_name: Optional[str]
+
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+
+
 class SupplierListData(BaseModel):
     total: int
-    items: List[SupplierOut]
+    items: List[SupplierListItem]
+
 
 
 class VersionPayload(BaseModel):

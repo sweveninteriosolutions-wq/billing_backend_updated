@@ -1,7 +1,7 @@
 # app/services/masters/customer_service.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, asc, desc
+from sqlalchemy import select, update, func, asc, desc, text
 
 from app.models.masters.customer_models import Customer
 from app.schemas.masters.customer_schema import (
@@ -39,6 +39,7 @@ def _map_customer(customer: Customer) -> CustomerOut:
         customer_code=customer.customer_code,
         name=customer.name,
         email=customer.email,
+        gstin=customer.gstin,
         phone=customer.phone,
         address=customer.address,
         is_active=customer.is_active,
@@ -131,48 +132,94 @@ async def get_customer(db: AsyncSession, customer_id: int):
 
     return _map_customer(customer)
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+
 async def list_customers(
     *,
     db: AsyncSession,
     name: Optional[str],
     email: Optional[str],
     phone: Optional[str],
+    is_active: Optional[bool],
     page: int,
     page_size: int,
 ):
-    query = select(Customer).where(Customer.is_active.is_(True))
-
-    if name:
-        query = query.where(Customer.name.ilike(f"%{name}%"))
-    if email:
-        query = query.where(Customer.email.ilike(f"%{email}%"))
-    if phone:
-        query = query.where(Customer.phone.ilike(f"%{phone}%"))
-
-    # -------------------------------------------------
-    # ALWAYS LATEST FIRST
-    # -------------------------------------------------
-    query = query.order_by(desc(Customer.created_at))
-
-    # -------------------------------------------------
-    # PAGINATION
-    # -------------------------------------------------
     offset = (page - 1) * page_size
 
-    total = await db.scalar(
-        select(func.count()).select_from(query.subquery())
-    )
+    conditions = []
+    params = {
+        "limit": page_size,
+        "offset": offset,
+    }
 
-    result = await db.execute(
-        query.offset(offset).limit(page_size)
-    )
+    if name:
+        conditions.append("c.name ILIKE :name")
+        params["name"] = f"%{name}%"
 
-    customers = result.scalars().all()
+    if email:
+        conditions.append("c.email ILIKE :email")
+        params["email"] = f"%{email}%"
 
-    return CustomerListData(
-        total=total or 0,
-        items=[_map_customer(c) for c in customers],
-    )
+    if phone:
+        conditions.append("c.phone ILIKE :phone")
+        params["phone"] = f"%{phone}%"
+
+    if is_active is not None:
+        conditions.append("c.is_active = :is_active")
+        params["is_active"] = is_active
+
+    where_clause = " AND ".join(conditions)
+    if where_clause:
+        where_clause = "WHERE " + where_clause
+
+    sql = f"""
+    select
+        c.id,
+        c.customer_code,
+        c.name,
+        c.email,
+        c.phone,
+        c.address,
+        c.gstin,
+        c.is_active,
+        c.is_deleted,
+        c.version,
+        c.created_at,
+        c.updated_at,
+
+        c.created_by_id,
+        cu.username AS created_by_name,
+
+        c.updated_by_id,
+        uu.username AS updated_by_name,
+
+        COUNT(*) OVER() AS total
+    FROM customers c
+    LEFT JOIN users cu ON cu.id = c.created_by_id
+    LEFT JOIN users uu ON uu.id = c.updated_by_id
+    {where_clause}
+    ORDER BY c.created_at DESC
+    LIMIT :limit OFFSET :offset
+    """
+
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    total = rows[0]["total"] if rows else 0
+
+    items = []
+    for r in rows:
+        item = dict(r)
+        item.pop("total", None)
+        items.append(item)
+
+    return {
+        "total": total,
+        "items": items,
+    }
+
 
 
 # =========================
@@ -202,6 +249,9 @@ async def update_customer(
 
     if payload.email is not None and payload.email != current.email:
         changes.append(f"email: '{current.email}' → '{payload.email}'")
+
+    if payload.gstin is not None and payload.gstin != current.gstin:
+        changes.append(f"gstin: '{current.gstin}' → '{payload.gstin}'")
 
     if payload.phone is not None and payload.phone != current.phone:
         old_phone = current.phone[-4:] if current.phone else "None"
@@ -296,8 +346,7 @@ async def deactivate_customer(db: AsyncSession, customer_id: int, user):
 
     customer.is_active = False
     customer.updated_by_id = user.id
-    customer.version += 1
-
+    
     await emit_activity(
         db=db,
         user_id=user.id,

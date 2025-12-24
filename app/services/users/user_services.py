@@ -66,40 +66,57 @@ async def create_user(db: AsyncSession, payload: UserCreateSchema, admin: User):
 # LIST USERS
 # =========================
 async def list_users(db: AsyncSession, filters: UserListFilters):
-    stmt = select(User)
+    base_stmt = select(User)
 
     if filters.search:
-        stmt = stmt.where(User.username.ilike(f"%{filters.search}%"))
+        base_stmt = base_stmt.where(User.username.ilike(f"%{filters.search}%"))
     if filters.role:
-        stmt = stmt.where(User.role == filters.role)
+        base_stmt = base_stmt.where(User.role == filters.role)
     if filters.is_active is not None:
-        stmt = stmt.where(User.is_active == filters.is_active)
+        base_stmt = base_stmt.where(User.is_active == filters.is_active)
     if filters.is_online is not None:
-        stmt = stmt.where(User.is_online == filters.is_online)
+        base_stmt = base_stmt.where(User.is_online == filters.is_online)
     if filters.created_today:
-        stmt = stmt.where(func.date(User.created_at) == date.today())
+        base_stmt = base_stmt.where(func.date(User.created_at) == date.today())
     if filters.created_by:
-        stmt = stmt.where(User.created_by_admin_id == filters.created_by)
+        base_stmt = base_stmt.where(User.created_by_admin_id == filters.created_by)
+
+    # total count (BEFORE pagination)
+    total = await db.scalar(
+        select(func.count()).select_from(base_stmt.subquery())
+    )
 
     sort_col = User.created_at if filters.sort_by == "created_at" else User.username
     sort_col = sort_col.desc() if filters.sort_order == "desc" else sort_col.asc()
 
-    stmt = stmt.order_by(sort_col).limit(filters.limit).offset(filters.offset)
+    stmt = (
+        base_stmt
+        .order_by(sort_col)
+        .limit(filters.limit)
+        .offset(filters.offset)
+    )
 
     result = await db.execute(stmt)
     users = result.scalars().all()
 
-    return [
-        UserListItemSchema(
-            id=u.id,
-            username=u.username,
-            role=u.role,
-            status="Active" if u.is_active else "Inactive",
-            is_online=u.is_online,
-            last_login=u.last_login,
-        )
-        for u in users
-    ]
+    return {
+        "items": [
+            UserListItemSchema(
+                id=u.id,
+                username=u.username,
+                role=u.role,
+                is_active=u.is_active,
+                is_online=u.is_online,
+                last_login=u.last_login,
+                version=u.version,
+            )
+            for u in users
+        ],
+        "total": total,
+        "limit": filters.limit,
+        "offset": filters.offset,
+    }
+
 
 
 # =========================

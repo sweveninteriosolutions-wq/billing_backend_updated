@@ -155,12 +155,13 @@ async def list_discounts(
     name,
     discount_type,
     is_active,
+    is_deleted,
     start_date,
     end_date,
     page,
     page_size,
 ):
-    query = select(Discount).where(Discount.is_deleted.is_(False))
+    query = select(Discount)
 
     if code:
         query = query.where(Discount.code.ilike(f"%{code}%"))
@@ -170,6 +171,8 @@ async def list_discounts(
         query = query.where(Discount.discount_type == discount_type)
     if is_active is not None:
         query = query.where(Discount.is_active == is_active)
+    if is_deleted is not None:
+        query = query.where(Discount.is_deleted == is_deleted)
     if start_date:
         query = query.where(Discount.start_date >= start_date)
     if end_date:
@@ -237,12 +240,10 @@ async def update_discount(
         .where(
             Discount.id == discount_id,
             Discount.is_deleted.is_(False),
-            Discount.version == payload.version,
         )
         .values(
             **data,
             updated_by_id=user.id,
-            version=Discount.version + 1,
         )
         .returning(Discount)
     )
@@ -287,7 +288,6 @@ async def deactivate_discount(
         .values(
             is_active=False,
             is_deleted=True,
-            version=Discount.version + 1,
             updated_by_id=user.id,
         )
         .returning(Discount)

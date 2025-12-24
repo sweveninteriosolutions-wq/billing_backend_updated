@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, asc, desc
+from sqlalchemy import select, update, func, asc, desc, text
 from sqlalchemy.exc import IntegrityError
 import uuid
 import re
@@ -46,7 +46,7 @@ def _map_supplier(supplier: Supplier) -> SupplierOut:
         email=supplier.email,
         address=supplier.address,
 
-        is_active=not supplier.is_deleted,
+        is_deleted=supplier.is_deleted,
         version=supplier.version,
 
         created_by=supplier.created_by_id,
@@ -140,60 +140,96 @@ async def get_supplier(db: AsyncSession, supplier_id: int):
 
     return _map_supplier(supplier)
 
-
-# =========================
-# LIST (LATEST FIRST)
-# =========================
 async def list_suppliers(
     *,
     db: AsyncSession,
     search: Optional[str],
+    is_deleted: Optional[bool],
     limit: int,
     offset: int,
     sort_by: str,
     sort_order: str,
 ):
-    query = select(Supplier).where(Supplier.is_deleted.is_(False))
-
-    if search:
-        search_term = (
-            search.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-        query = query.where(Supplier.name.ilike(f"%{search_term}%", escape="\\"))
-
     sort_map = {
-        "name": Supplier.name,
-        "created_at": Supplier.created_at,
-        "email": Supplier.email,
-        "phone": Supplier.phone,
+        "name": "s.name",
+        "created_at": "s.created_at",
+        "email": "s.email",
+        "phone": "s.phone",
     }
 
     sort_col = sort_map.get(sort_by)
     if not sort_col:
-        raise AppException(
-            400,
-            "Invalid sort field",
-            ErrorCode.VALIDATION_ERROR,
+        raise AppException(400, "Invalid sort field", ErrorCode.VALIDATION_ERROR)
+
+    sort_dir = "DESC" if sort_order.lower() == "desc" else "ASC"
+
+    # ✅ INIT CONDITIONS
+    conditions: list[str] = []
+    params = {
+        "limit": limit,
+        "offset": offset,
+    }
+
+    # ✅ SEARCH FILTER
+    if search:
+        conditions.append(
+            "(s.name ILIKE :search OR s.email ILIKE :search OR s.phone ILIKE :search)"
         )
+        params["search"] = f"%{search}%"
 
-    query = query.order_by(
-        desc(sort_col) if sort_order == "desc" else asc(sort_col)
-    )
+    # ✅ IS_DELETED FILTER
+    if is_deleted is not None:
+        conditions.append("s.is_deleted = :is_deleted")
+        params["is_deleted"] = is_deleted
 
-    total = await db.scalar(
-        select(func.count()).select_from(query.subquery())
-    )
+    # ✅ SAFE WHERE CLAUSE
+    where_clause = " AND ".join(conditions)
+    if where_clause:
+        where_clause = f"WHERE {where_clause}"
 
-    result = await db.execute(
-        query.offset(offset).limit(limit)
-    )
+    sql = f"""
+        SELECT
+            s.id,
+            s.supplier_code,
+            s.name,
+            s.contact_person,
+            s.email,
+            s.phone,
+            s.gstin,
+            s.version,
+            s.is_deleted,
+            s.created_at,
+            s.updated_at,
 
-    return SupplierListData(
-        total=total or 0,
-        items=[_map_supplier(s) for s in result.scalars().all()],
-    )
+            s.created_by_id AS created_by,
+            s.updated_by_id AS updated_by,
+            cu.username AS created_by_name,
+            uu.username AS updated_by_name,
+
+            COUNT(*) OVER() AS total
+        FROM suppliers s
+        LEFT JOIN users cu ON cu.id = s.created_by_id
+        LEFT JOIN users uu ON uu.id = s.updated_by_id
+        {where_clause}
+        ORDER BY {sort_col} {sort_dir}
+        LIMIT :limit OFFSET :offset
+    """
+
+    raw_rows = (await db.execute(text(sql), params)).mappings().all()
+
+    total = raw_rows[0]["total"] if raw_rows else 0
+
+    # ✅ FAST + SAFE MAPPING
+    items = [
+        {k: v for k, v in r.items() if k != "total"}
+        for r in raw_rows
+    ]
+
+    return {
+        "total": total,
+        "items": items,
+    }
+
 
 
 # =========================

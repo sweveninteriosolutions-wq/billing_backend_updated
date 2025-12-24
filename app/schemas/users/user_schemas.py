@@ -3,13 +3,17 @@ from typing import Optional, List
 from datetime import datetime
 
 
-# =========================
-# BASE RESPONSE
-# =========================
-class APIResponse(BaseModel):
+from typing import Generic, Optional, TypeVar
+from pydantic.generics import GenericModel
+
+T = TypeVar("T")
+
+
+class APIResponse(GenericModel, Generic[T]):
     success: bool = True
     message: str
-    data: Optional[object] = None
+    data: Optional[T] = None
+
 
 
 # =========================
@@ -56,12 +60,14 @@ class UserListItemSchema(BaseModel):
     id: int
     username: EmailStr
     role: str
-    status: str
+    is_active: bool
     is_online: bool
     last_login: Optional[datetime]
+    version: int
 
     class Config:
         from_attributes = True
+
 
 
 class UserDetailSchema(BaseModel):
@@ -88,3 +94,9 @@ class UserDashboardStatsSchema(BaseModel):
     active_users: int
     admin_users: int
     online_users: int
+
+class UserListResponseSchema(BaseModel):
+    items: List["UserListItemSchema"]
+    total: int
+    limit: int
+    offset: int

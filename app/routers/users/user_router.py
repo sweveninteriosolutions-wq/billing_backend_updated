@@ -8,6 +8,8 @@ from app.schemas.users.user_schemas import (
     UserUpdateSchema,
     UserListFilters,
     VersionOnlySchema,
+    UserListResponseSchema
+
 )
 from app.services.users.user_services import (
     create_user,
@@ -37,7 +39,10 @@ async def create_user_api(
     return success_response("User created successfully", user)
 
 
-@router.get("/", response_model=APIResponse)
+@router.get(
+    "/",
+    response_model=APIResponse[UserListResponseSchema]
+)
 async def list_users_api(
     filters: UserListFilters = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -46,6 +51,7 @@ async def list_users_api(
     logger.info("List users request", extra=filters.dict())
     users = await list_users(db, filters)
     return success_response("Users fetched", users)
+
 
 
 @router.get("/{user_id}", response_model=APIResponse)

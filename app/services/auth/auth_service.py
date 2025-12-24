@@ -76,11 +76,18 @@ async def login_user(db: AsyncSession, email: str, password: str):
     logger.info("Login successful", extra={"user_id": user.id})
 
     return {
-        "access_token": access_token,
-        "refresh_token": refresh_value,
-        "token_type": "bearer",
-        "role": user.role,
+            "auth": {
+                "access_token": access_token,
+                "refresh_token": refresh_value,
+                "token_type": "bearer",
+            },
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role,
+            },
     }
+
 
 
 # =====================================================
