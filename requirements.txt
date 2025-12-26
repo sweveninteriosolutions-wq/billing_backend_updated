@@ -2,6 +2,7 @@ aiosqlite==0.21.0
 alembic==1.17.0
 annotated-types==0.7.0
 anyio==4.11.0
+APScheduler==3.11.1
 astor==0.8.1
 asyncpg==0.30.0
 bcrypt==4.0.1
@@ -82,11 +83,13 @@ supabase-functions==2.22.0
 tqdm==4.67.1
 typer==0.19.2
 typing_extensions==4.15.0
+tzdata==2025.3
+tzlocal==5.3.1
 ujson==5.11.0
 uvicorn==0.23.2
 watchfiles==1.1.0
 websockets==15.0.1
 win32_setctime==1.2.0
 yarl==1.22.0
+gunicorn 
 pydantic[email]
-gunicorn
