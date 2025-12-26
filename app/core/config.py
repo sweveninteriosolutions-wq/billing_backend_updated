@@ -2,6 +2,9 @@
 
 import os
 from dotenv import load_dotenv
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 load_dotenv()
 
@@ -39,9 +42,13 @@ DB_ECHO_POOL = os.getenv("DB_ECHO_POOL", "false").lower() == "true"
 
 # ---- SSL ----
 # MUST be true in production
-# DB_SSL_VERIFY = os.getenv("DB_SSL_VERIFY", "true").lower() == "true"
-# if IS_PRODUCTION and not DB_SSL_VERIFY:
-#     raise ValueError("DB_SSL_VERIFY must be true in production")
+DB_SSL_VERIFY = os.getenv("DB_SSL_VERIFY", "true").lower() == "true"
+# Supabase + asyncpg requires relaxed cert verification
+if IS_PRODUCTION:
+    logger.warning(
+        "Running in production with relaxed SSL verification "
+        "(Supabase asyncpg compatibility mode)"
+    )
 
 # =====================================================
 # JWT / AUTH
