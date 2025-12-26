@@ -62,13 +62,20 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting application")
 
-    await init_models()
+    # ✅ DB init ONLY in development
+    if ENV == "development":
+        await init_models()
+        logger.info("📦 Database models initialized (development)")
+    else:
+        logger.info("📦 Production mode: init_models() skipped")
 
-    # ⚠️ Scheduler should NOT run on every worker
+    # ⚠️ Scheduler control
     if ENV == "production":
         if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
             scheduler.start()
             logger.info("🕒 Scheduler started (production)")
+        else:
+            logger.info("🕒 Scheduler disabled (production)")
     else:
         scheduler.start()
         logger.info("🕒 Scheduler started (development)")
