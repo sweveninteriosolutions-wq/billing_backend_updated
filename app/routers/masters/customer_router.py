@@ -56,6 +56,7 @@ async def list_customers_api(
     name: Optional[str] = Query(None),
     email: Optional[str] = Query(None),
     phone: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
 
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -76,6 +77,7 @@ async def list_customers_api(
         name=name,
         email=email,
         phone=phone,
+        is_active=is_active, 
         page=page,
         page_size=page_size,
     )

@@ -110,7 +110,7 @@ async def create_product(db: AsyncSession, payload: ProductCreate, user):
     return _map_product(product)
 
 
-# ---------------- LIST ----------------
+
 async def list_products(
     *,
     db: AsyncSession,
@@ -124,10 +124,13 @@ async def list_products(
     sort_by: str,
     order: str,
 ):
-    query = select(Product).where(Product.is_deleted.is_(False))
+    # =========================
+    # BASE FILTERS
+    # =========================
+    filters = [Product.is_deleted.is_(False)]
 
     if search:
-        query = query.where(
+        filters.append(
             or_(
                 Product.name.ilike(f"%{search}%"),
                 Product.sku.ilike(f"%{search}%"),
@@ -135,17 +138,20 @@ async def list_products(
         )
 
     if category:
-        query = query.where(Product.category == category)
+        filters.append(Product.category == category)
 
     if supplier_id:
-        query = query.where(Product.supplier_id == supplier_id)
+        filters.append(Product.supplier_id == supplier_id)
 
     if min_price is not None:
-        query = query.where(Product.price >= min_price)
+        filters.append(Product.price >= min_price)
 
     if max_price is not None:
-        query = query.where(Product.price <= max_price)
+        filters.append(Product.price <= max_price)
 
+    # =========================
+    # SORTING
+    # =========================
     sort_col = ALLOWED_SORT_FIELDS.get(sort_by)
     if not sort_col:
         raise AppException(
@@ -154,20 +160,70 @@ async def list_products(
             ErrorCode.VALIDATION_ERROR,
         )
 
-    query = query.order_by(
-        desc(sort_col) if order == "desc" else asc(sort_col)
+    order_by = desc(sort_col) if order == "desc" else asc(sort_col)
+
+    # =========================
+    # DATA QUERY (FAST)
+    # =========================
+    data_stmt = (
+        select(
+            Product.id,
+            Product.sku,
+            Product.name,
+            Product.category,
+            Product.price,
+            Product.min_stock_threshold,
+            Product.supplier_id,
+            Product.is_deleted,
+            Product.version,
+            Product.created_by_id,
+            Product.updated_by_id,
+            Product.created_at,
+            Product.updated_at,
+        )
+        .where(*filters)
+        .order_by(order_by)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    rows = (await db.execute(data_stmt)).all()
 
-    result = await db.execute(
-        query.offset((page - 1) * page_size).limit(page_size)
+    items = [
+        ProductOut(
+            id=r.id,
+            sku=r.sku,
+            name=r.name,
+            category=r.category,
+            price=r.price,
+            min_stock_threshold=r.min_stock_threshold,
+            supplier_id=r.supplier_id,
+            is_active=not r.is_deleted,
+            version=r.version,
+            created_by=r.created_by_id,
+            updated_by=r.updated_by_id,
+            created_by_name=None,   # ❗ intentionally omitted
+            updated_by_name=None,   # ❗ intentionally omitted
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+    # =========================
+    # COUNT QUERY (FAST)
+    # =========================
+    count_stmt = select(func.count()).select_from(
+        select(Product.id).where(*filters).subquery()
     )
+
+    total = await db.scalar(count_stmt)
 
     return ProductListData(
         total=total or 0,
-        items=[_map_product(p) for p in result.scalars().all()],
+        items=items,
     )
+
 
 
 # ---------------- GET ----------------

@@ -72,29 +72,75 @@ class GRNOutSchema(BaseModel):
         from_attributes = True
 
 
-
 from pydantic import BaseModel
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime
 
 
-# ==============================
-# GRN LIST ITEM (SUMMARY)
-# ==============================
-class GRNSummarySchema(BaseModel):
-    grn_code: int
-    supplier_name: str
-    purchase_order: Optional[str]
+# -----------------------------
+# NESTED SCHEMAS
+# -----------------------------
+class SupplierSchema(BaseModel):
+    id: int
+    name: str
+
+
+class LocationSchema(BaseModel):
+    id: int
+    name: str
+
+
+class ProductSchema(BaseModel):
+    id: int
+    name: str
+    sku: str
+
+
+class GRNItemViewSchema(BaseModel):
+    product: ProductSchema
+    quantity: int
+    unit_cost: Decimal
+    total: Decimal
+
+
+class GRNSummaryViewSchema(BaseModel):
     no_of_items: int
-    total_grn_value: Decimal
+    total_value: Decimal
+
+
+class GRNAuditViewSchema(BaseModel):
     created_at: datetime
+    created_by: str
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
+
+
+# -----------------------------
+# MAIN VIEW SCHEMA
+# -----------------------------
+class GRNViewSchema(BaseModel):
+    id: int
+    code: str
     status: str
+    purchase_order: str
+    bill_number: str
+    version: int
+
+    supplier: SupplierSchema
+    location: LocationSchema
+
+    items: List[GRNItemViewSchema]
+    summary: GRNSummaryViewSchema
+    audit: GRNAuditViewSchema
+
+    class Config:
+        from_attributes = True
 
 
-# ==============================
-# GRN LIST DATA
-# ==============================
-class GRNListData(BaseModel):
+# -----------------------------
+# LIST RESPONSE
+# -----------------------------
+class GRNListViewData(BaseModel):
     total: int
-    items: List[GRNSummarySchema]
+    items: List[GRNViewSchema]

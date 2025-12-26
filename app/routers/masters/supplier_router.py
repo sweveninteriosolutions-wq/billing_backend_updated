@@ -58,28 +58,20 @@ async def list_suppliers_api(
     user=Depends(require_role(["admin", "inventory"])),
 
     search: Optional[str] = Query(None),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-
+    is_deleted: Optional[bool] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
 ):
-    logger.info(
-        "List suppliers",
-        extra={
-            "search": search,
-            "limit": limit,
-            "offset": offset,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        },
-    )
+    logger.debug("List suppliers")
 
     data = await list_suppliers(
         db=db,
         search=search,
-        limit=limit,
-        offset=offset,
+        is_deleted=is_deleted,
+        page=page,
+        page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
     )

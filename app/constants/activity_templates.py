@@ -14,7 +14,9 @@ ACTIVITY_TEMPLATES = {
         "{actor_role} ({actor_email}) created user {target_email} with role {target_role}",
 
     ActivityCode.UPDATE_USER_ROLE:
-        "{actor_role} ({actor_email}) changed role of {target_email} to {target_role}",
+        "{actor_role} ({actor_email}) changed role of "
+            "{target_email} from {old_role} to {new_role}",
+
 
     ActivityCode.UPDATE_USER_EMAIL:
         "{actor_role} ({actor_email}) changed email of user to {target_email}",
@@ -94,6 +96,9 @@ ACTIVITY_TEMPLATES = {
     "{actor_role} ({actor_email}) verified GRN {target_name}",
     ActivityCode.DELETE_GRN:
     "{actor_role} ({actor_email}) deleted GRN {target_name}",
+    ActivityCode.CANCEL_GRN:
+    "{actor_role} ({actor_email}) canceled GRN {target_name}",
+    
 
     # ---------------- QUOTATIONS ----------------
     ActivityCode.CREATE_QUOTATION:

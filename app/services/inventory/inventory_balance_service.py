@@ -33,11 +33,15 @@ def _map_balance(
         min_stock_threshold=product.min_stock_threshold,
         updated_at=balance.updated_at,
     )
+import time
+import logging
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.inventory.inventory_balance_view import InventoryBalanceView
 
-# =====================================================
-# LIST INVENTORY BALANCES
-# =====================================================
+logger = logging.getLogger(__name__)
+
 async def list_inventory_balances(
     db: AsyncSession,
     product_id: int | None,
@@ -46,109 +50,123 @@ async def list_inventory_balances(
     page: int,
     page_size: int,
 ):
+    t0 = time.perf_counter()
+    logger.info("[INV] start list_inventory_balances")
+
+    # -------------------------------------------------
+    # BUILD FILTERS (VIEW ONLY)
+    # -------------------------------------------------
+    filters = []
+
+    if product_id:
+        filters.append(InventoryBalanceView.product_id == product_id)
+
+    if location_id:
+        filters.append(InventoryBalanceView.location_id == location_id)
+
+    if search:
+        filters.append(
+            InventoryBalanceView.product_name.ilike(f"%{search}%")
+        )
+
+    t1 = time.perf_counter()
+    logger.info("[INV] filters built", extra={"t_filters": round(t1 - t0, 4)})
+
+    # -------------------------------------------------
+    # BUILD QUERY (SINGLE, SIMPLE QUERY)
+    # -------------------------------------------------
+    stmt = (
+        select(
+            InventoryBalanceView,
+            func.count().over().label("total"),
+        )
+        .where(*filters)
+        .order_by(
+            InventoryBalanceView.product_name.asc(),
+            InventoryBalanceView.location_code.asc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    t2 = time.perf_counter()
+    logger.info("[INV] query built", extra={"t_query_build": round(t2 - t1, 4)})
+
+    # -------------------------------------------------
+    # EXECUTE QUERY
+    # -------------------------------------------------
+    t_exec_start = time.perf_counter()
+    result = await db.execute(stmt)
+    rows = result.all()
+    t_exec_end = time.perf_counter()
+
     logger.info(
-        "List inventory balances",
+        "[INV] db.execute done",
         extra={
-            "product_id": product_id,
-            "location_id": location_id,
-            "search": search,
+            "t_db": round(t_exec_end - t_exec_start, 4),
+            "rows": len(rows),
+        },
+    )
+
+    # -------------------------------------------------
+    # EMPTY RESULT
+    # -------------------------------------------------
+    if not rows:
+        t_end = time.perf_counter()
+        logger.info(
+            "[INV] empty result",
+            extra={"t_total": round(t_end - t0, 4)},
+        )
+        return {"total": 0, "items": []}
+
+    # -------------------------------------------------
+    # EXTRACT TOTAL
+    # -------------------------------------------------
+    total = rows[0].total
+
+    # -------------------------------------------------
+    # MAP RESPONSE (NO JOIN OBJECTS ANYMORE)
+    # -------------------------------------------------
+    t_map_start = time.perf_counter()
+
+    items = [
+        {
+            "product_id": r.product_id,
+            "product_name": r.product_name,
+            "sku": r.sku,
+            "location_id": r.location_id,
+            "location_code": r.location_code,
+            "quantity": r.quantity,
+            "min_stock_threshold": r.min_stock_threshold,  # 👈 ADD THIS
+            "updated_at": r.updated_at,
+        }
+        for r, _ in rows
+    ]
+
+
+    t_map_end = time.perf_counter()
+    logger.info(
+        "[INV] mapping done",
+        extra={"t_mapping": round(t_map_end - t_map_start, 4)},
+    )
+
+    # -------------------------------------------------
+    # FINISH
+    # -------------------------------------------------
+    t_end = time.perf_counter()
+    logger.info(
+        "[INV] end list_inventory_balances",
+        extra={
+            "t_total": round(t_end - t0, 4),
             "page": page,
             "page_size": page_size,
         },
     )
 
-    # -------------------------------------------------
-    # BASE FILTERS (BALANCE TABLE ONLY)
-    # -------------------------------------------------
-    base_filters = []
-
-    if product_id:
-        base_filters.append(InventoryBalance.product_id == product_id)
-
-    if location_id:
-        base_filters.append(InventoryBalance.location_id == location_id)
-
-    if search:
-        base_filters.append(
-            InventoryBalance.product_id.in_(
-                select(Product.id).where(
-                    Product.name.ilike(f"%{search}%"),
-                    Product.is_deleted.is_(False),
-                )
-            )
-        )
-
-    # -------------------------------------------------
-    # FAST COUNT
-    # -------------------------------------------------
-    total = await db.scalar(
-        select(func.count())
-        .select_from(InventoryBalance)
-        .where(*base_filters)
-    )
-
-    if not total:
-        return {"total": 0, "items": []}
-
-    # -------------------------------------------------
-    # STEP 1: FETCH IDS ONLY (FAST SORT)
-    # -------------------------------------------------
-    id_stmt = (
-        select(
-            InventoryBalance.product_id,
-            InventoryBalance.location_id,
-        )
-        .join(Product, InventoryBalance.product_id == Product.id)
-        .join(InventoryLocation, InventoryBalance.location_id == InventoryLocation.id)
-        .where(
-            *base_filters,
-            Product.is_deleted.is_(False),
-            InventoryLocation.is_deleted.is_(False),
-        )
-        .order_by(Product.name.asc(), InventoryLocation.code.asc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-
-    id_rows = (await db.execute(id_stmt)).all()
-
-    if not id_rows:
-        return {"total": total, "items": []}
-
-    # -------------------------------------------------
-    # STEP 2: FETCH FULL ROWS (NO SORT)
-    # -------------------------------------------------
-    stmt = (
-        select(InventoryBalance, Product, InventoryLocation)
-        .join(Product, InventoryBalance.product_id == Product.id)
-        .join(InventoryLocation, InventoryBalance.location_id == InventoryLocation.id)
-        .where(
-            InventoryBalance.product_id.in_([r.product_id for r in id_rows]),
-            InventoryBalance.location_id.in_([r.location_id for r in id_rows]),
-        )
-    )
-
-    result = await db.execute(stmt)
-
-    # Preserve ordering
-    order_map = {
-        (r.product_id, r.location_id): i
-        for i, r in enumerate(id_rows)
-    }
-
-    rows = result.all()
-    rows.sort(
-        key=lambda r: order_map[(r[0].product_id, r[0].location_id)]
-    )
-
     return {
-        "total": total or 0,
-        "items": [
-            _map_balance(balance, product, location)
-            for balance, product, location in rows
-        ],
+        "total": total,
+        "items": items,
     }
-
 
 
 # =====================================================

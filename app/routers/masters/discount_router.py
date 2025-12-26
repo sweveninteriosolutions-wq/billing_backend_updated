@@ -47,6 +47,7 @@ async def list_discounts_api(
     name: str | None = Query(None),
     discount_type: str | None = Query(None),
     is_active: bool | None = Query(None),
+    is_deleted: bool | None = Query(None),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
 
@@ -60,6 +61,7 @@ async def list_discounts_api(
         name=name,
         discount_type=discount_type,
         is_active=is_active,
+        is_deleted=is_deleted,
         start_date=start_date,
         end_date=end_date,
         page=page,

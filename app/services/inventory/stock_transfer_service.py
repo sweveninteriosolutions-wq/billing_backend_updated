@@ -14,6 +14,7 @@ from app.constants.inventory_movement_type import InventoryMovementType
 from app.models.inventory.stock_transfer_models import StockTransfer
 from app.models.inventory.inventory_location_models import InventoryLocation
 from app.models.inventory.inventory_balance_models import InventoryBalance
+from app.models.inventory.stock_transfer_view import StockTransferView 
 from app.models.users.user_models import User
 from app.models.masters.product_models import Product
 from app.models.enums.stock_transfer_status import TransferStatus
@@ -25,6 +26,34 @@ from app.schemas.inventory.stock_transfer_schemas import (
     StockTransferCreateSchema,
     StockTransferTableSchema,
 )
+
+
+async def get_inventory_summary(db: AsyncSession) -> dict:
+    rows = await db.execute(
+        select(
+            InventoryLocation.code,
+            func.coalesce(func.sum(InventoryBalance.quantity), 0)
+        )
+        .join(
+            InventoryBalance,
+            InventoryBalance.location_id == InventoryLocation.id
+        )
+        .where(InventoryLocation.is_active.is_(True))
+        .group_by(InventoryLocation.code)
+    )
+
+    summary = {
+        "godown": 0,
+        "showroom": 0,
+    }
+
+    for code, qty in rows.all():
+        if code.lower() == "godown":
+            summary["godown"] = qty
+        elif code.lower() == "showroom":
+            summary["showroom"] = qty
+
+    return summary
 
 
 def generate_transfer_signature(
@@ -343,71 +372,33 @@ async def get_stock_transfer(
 
     return StockTransferTableSchema.from_orm(row)
 
-async def list_stock_transfers(
+
+async def list_stock_transfers_view(
     db: AsyncSession,
     *,
-    product_id: int | None,
-    status: TransferStatus | None,
-    from_location_id: int | None,
-    to_location_id: int | None,
+    status: str | None,
     page: int,
     page_size: int,
 ):
-    TransferredUser = aliased(User)
-    CompletedUser = aliased(User)
-
-    filters = [StockTransfer.is_deleted.is_(False)]
-
-    if product_id:
-        filters.append(StockTransfer.product_id == product_id)
+    filters = []
     if status:
-        filters.append(StockTransfer.status == status)
-    if from_location_id:
-        filters.append(StockTransfer.from_location_id == from_location_id)
-    if to_location_id:
-        filters.append(StockTransfer.to_location_id == to_location_id)
+        filters.append(StockTransferView.status == status)
 
-    # -----------------------------
-    # COUNT (FAST, NO ORDER BY)
-    # -----------------------------
     total = await db.scalar(
-        select(func.count()).select_from(StockTransfer).where(*filters)
+        select(func.count()).select_from(StockTransferView).where(*filters)
     )
 
-    # -----------------------------
-    # DATA (FLAT ROWS)
-    # -----------------------------
-    stmt = (
-        select(
-            StockTransfer.id,
-            StockTransfer.product_id,
-            StockTransfer.quantity,
-            StockTransfer.from_location_id,
-            StockTransfer.to_location_id,
-            StockTransfer.status,
-            StockTransfer.transferred_by_id,
-            (
-                select(TransferredUser.username)
-                .where(TransferredUser.id == StockTransfer.transferred_by_id)
-                .scalar_subquery()
-            ).label("transferred_by"),
-            StockTransfer.completed_by_id,
-            (
-                select(CompletedUser.username)
-                .where(CompletedUser.id == StockTransfer.completed_by_id)
-                .scalar_subquery()
-            ).label("completed_by"),
-            StockTransfer.created_at,
-            StockTransfer.updated_at,
+    rows = (
+        await db.execute(
+            select(StockTransferView)
+            .where(*filters)
+            .order_by(StockTransferView.transfer_date.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
-        .where(*filters)
-        .order_by(StockTransfer.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
+    ).scalars().all()
 
-    rows = (await db.execute(stmt)).all()
+    summary = await get_inventory_summary(db)
 
-    data = [StockTransferTableSchema.from_orm(r) for r in rows]
+    return total or 0, rows, summary
 
-    return total or 0, data

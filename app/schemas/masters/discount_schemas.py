@@ -31,8 +31,6 @@ class DiscountUpdate(BaseModel):
     note: Optional[str] = None
     is_active: Optional[bool] = None
 
-    version: int
-
 
 class DiscountOut(BaseModel):
     id: int

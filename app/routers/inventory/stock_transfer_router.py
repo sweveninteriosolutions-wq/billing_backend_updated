@@ -8,7 +8,8 @@ from app.models.enums.stock_transfer_status import TransferStatus
 from app.schemas.inventory.stock_transfer_schemas import (
     StockTransferCreateSchema,
     StockTransferResponse,
-    StockTransferListResponse,
+    StockTransferViewListResponse,
+
 )
 
 from app.services.inventory.stock_transfer_service import (
@@ -16,7 +17,7 @@ from app.services.inventory.stock_transfer_service import (
     complete_stock_transfer,
     cancel_stock_transfer,
     get_stock_transfer,
-    list_stock_transfers,
+    list_stock_transfers_view,
 )
 
 router = APIRouter(prefix="/stock-transfers", tags=["Stock Transfers"])
@@ -70,30 +71,30 @@ async def get_stock_transfer_api(
     }
 
 
-@router.get("/", response_model=StockTransferListResponse)
+@router.get(
+    "/",
+    response_model=StockTransferViewListResponse
+)
 async def list_stock_transfers_api(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_role(["admin", "inventory"])),
 
-    product_id: int | None = Query(None),
     status: TransferStatus | None = Query(None),
-    from_location_id: int | None = Query(None),
-    to_location_id: int | None = Query(None),
-
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    total, data = await list_stock_transfers(
+    total, data, summary = await list_stock_transfers_view(
         db=db,
-        product_id=product_id,
         status=status,
-        from_location_id=from_location_id,
-        to_location_id=to_location_id,
         page=page,
         page_size=page_size,
     )
+
+
     return {
         "message": "Stock transfers fetched",
         "total": total,
+        "summary": summary,
         "data": data,
     }
+
