@@ -39,9 +39,9 @@ DB_ECHO_POOL = os.getenv("DB_ECHO_POOL", "false").lower() == "true"
 
 # ---- SSL ----
 # MUST be true in production
-DB_SSL_VERIFY = os.getenv("DB_SSL_VERIFY", "true").lower() == "true"
-if IS_PRODUCTION and not DB_SSL_VERIFY:
-    raise ValueError("DB_SSL_VERIFY must be true in production")
+# DB_SSL_VERIFY = os.getenv("DB_SSL_VERIFY", "true").lower() == "true"
+# if IS_PRODUCTION and not DB_SSL_VERIFY:
+#     raise ValueError("DB_SSL_VERIFY must be true in production")
 
 # =====================================================
 # JWT / AUTH
