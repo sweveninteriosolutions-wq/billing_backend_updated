@@ -49,8 +49,8 @@ class UserListFilters(BaseModel):
     created_by: Optional[int] = None
     sort_by: str = "created_at"
     sort_order: str = "desc"
-    limit: int = 50
-    offset: int = 0
+    page: int = 1
+    page_size: int = 10
 
 
 # =========================
@@ -96,7 +96,7 @@ class UserDashboardStatsSchema(BaseModel):
     online_users: int
 
 class UserListResponseSchema(BaseModel):
-    items: List["UserListItemSchema"]
+    items: List[UserListItemSchema]
     total: int
-    limit: int
-    offset: int
+    page: int
+    page_size: int

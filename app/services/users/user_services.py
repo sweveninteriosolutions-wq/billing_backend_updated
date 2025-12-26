@@ -65,40 +65,88 @@ async def create_user(db: AsyncSession, payload: UserCreateSchema, admin: User):
 # =========================
 # LIST USERS
 # =========================
-async def list_users(db: AsyncSession, filters: UserListFilters):
+from datetime import date
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def list_users(
+    db: AsyncSession,
+    filters: UserListFilters,
+) -> dict:
     base_stmt = select(User)
 
+    # --------------------
+    # Filters
+    # --------------------
     if filters.search:
-        base_stmt = base_stmt.where(User.username.ilike(f"%{filters.search}%"))
+        base_stmt = base_stmt.where(
+            User.username.ilike(f"%{filters.search}%")
+        )
+
     if filters.role:
         base_stmt = base_stmt.where(User.role == filters.role)
+
     if filters.is_active is not None:
         base_stmt = base_stmt.where(User.is_active == filters.is_active)
+
     if filters.is_online is not None:
         base_stmt = base_stmt.where(User.is_online == filters.is_online)
-    if filters.created_today:
-        base_stmt = base_stmt.where(func.date(User.created_at) == date.today())
-    if filters.created_by:
-        base_stmt = base_stmt.where(User.created_by_admin_id == filters.created_by)
 
-    # total count (BEFORE pagination)
+    if filters.created_today:
+        base_stmt = base_stmt.where(
+            func.date(User.created_at) == date.today()
+        )
+
+    if filters.created_by:
+        base_stmt = base_stmt.where(
+            User.created_by_admin_id == filters.created_by
+        )
+
+    # --------------------
+    # Total count (before pagination)
+    # --------------------
     total = await db.scalar(
         select(func.count()).select_from(base_stmt.subquery())
     )
 
-    sort_col = User.created_at if filters.sort_by == "created_at" else User.username
-    sort_col = sort_col.desc() if filters.sort_order == "desc" else sort_col.asc()
+    # --------------------
+    # Sorting (safe)
+    # --------------------
+    sort_map = {
+        "created_at": User.created_at,
+        "username": User.username,
+    }
+
+    sort_col = sort_map.get(filters.sort_by)
+    if not sort_col:
+        raise AppException(400, "Invalid sort field", ErrorCode.VALIDATION_ERROR)
+
+    sort_col = (
+        sort_col.desc()
+        if filters.sort_order.lower() == "desc"
+        else sort_col.asc()
+    )
+
+    # --------------------
+    # Pagination
+    # --------------------
+    page = max(filters.page, 1)
+    page_size = filters.page_size
+    offset = (page - 1) * page_size
 
     stmt = (
         base_stmt
         .order_by(sort_col)
-        .limit(filters.limit)
-        .offset(filters.offset)
+        .limit(page_size)
+        .offset(offset)
     )
 
     result = await db.execute(stmt)
     users = result.scalars().all()
 
+    # --------------------
+    # Response (MATCHES SCHEMA)
+    # --------------------
     return {
         "items": [
             UserListItemSchema(
@@ -113,10 +161,9 @@ async def list_users(db: AsyncSession, filters: UserListFilters):
             for u in users
         ],
         "total": total,
-        "limit": filters.limit,
-        "offset": filters.offset,
+        "page": page,
+        "page_size": page_size,
     }
-
 
 
 # =========================

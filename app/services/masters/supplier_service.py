@@ -145,8 +145,8 @@ async def list_suppliers(
     db: AsyncSession,
     search: Optional[str],
     is_deleted: Optional[bool],
-    limit: int,
-    offset: int,
+    page: int,
+    page_size: int,
     sort_by: str,
     sort_order: str,
 ):
@@ -163,26 +163,26 @@ async def list_suppliers(
 
     sort_dir = "DESC" if sort_order.lower() == "desc" else "ASC"
 
-    # ✅ INIT CONDITIONS
+    offset = (page - 1) * page_size
+
     conditions: list[str] = []
     params = {
-        "limit": limit,
+        "limit": page_size,
         "offset": offset,
     }
 
-    # ✅ SEARCH FILTER
+    # 🔍 Search filter
     if search:
         conditions.append(
             "(s.name ILIKE :search OR s.email ILIKE :search OR s.phone ILIKE :search)"
         )
         params["search"] = f"%{search}%"
 
-    # ✅ IS_DELETED FILTER
+    # 🗑️ is_deleted filter
     if is_deleted is not None:
         conditions.append("s.is_deleted = :is_deleted")
         params["is_deleted"] = is_deleted
 
-    # ✅ SAFE WHERE CLAUSE
     where_clause = " AND ".join(conditions)
     if where_clause:
         where_clause = f"WHERE {where_clause}"
@@ -219,7 +219,6 @@ async def list_suppliers(
 
     total = raw_rows[0]["total"] if raw_rows else 0
 
-    # ✅ FAST + SAFE MAPPING
     items = [
         {k: v for k, v in r.items() if k != "total"}
         for r in raw_rows

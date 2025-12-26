@@ -59,8 +59,8 @@ async def list_suppliers_api(
 
     search: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
 ):
@@ -70,8 +70,8 @@ async def list_suppliers_api(
         db=db,
         search=search,
         is_deleted=is_deleted,
-        limit=limit,
-        offset=offset,
+        page=page,
+        page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
     )
