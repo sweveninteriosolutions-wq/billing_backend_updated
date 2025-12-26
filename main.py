@@ -112,13 +112,16 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 # ------------------------------------------------------------------------------
 app.middleware("http")(request_logging_middleware)
 
+origins = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS or ["http://localhost:5173"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ------------------------------------------------------------------------------
 # HEALTH CHECK
