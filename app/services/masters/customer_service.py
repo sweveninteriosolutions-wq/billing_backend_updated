@@ -346,6 +346,7 @@ async def deactivate_customer(db: AsyncSession, customer_id: int, user):
 
     customer.is_active = False
     customer.updated_by_id = user.id
+    customer.version += 1
     
     await emit_activity(
         db=db,

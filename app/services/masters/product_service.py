@@ -108,20 +108,7 @@ async def create_product(db: AsyncSession, payload: ProductCreate, user):
     await db.commit()
     await db.refresh(product)
     return _map_product(product)
-from sqlalchemy import select, func, desc, asc, or_
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.masters.product_models import Product
-from app.schemas.masters.product_schemas import ProductListData, ProductOut
-from app.core.exceptions import AppException
-from app.constants.error_codes import ErrorCode
-
-ALLOWED_SORT_FIELDS = {
-    "created_at": Product.created_at,
-    "name": Product.name,
-    "price": Product.price,
-    "sku": Product.sku,
-}
 
 
 async def list_products(

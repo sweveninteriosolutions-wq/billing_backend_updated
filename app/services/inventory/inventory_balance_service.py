@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, tuple_
+from sqlalchemy import select, func
 
 from app.models.inventory.inventory_balance_models import InventoryBalance
 from app.models.masters.product_models import Product
