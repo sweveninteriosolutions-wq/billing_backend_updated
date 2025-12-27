@@ -10,6 +10,8 @@ from sqlalchemy import select, update, func, asc, desc, delete
 from sqlalchemy.orm import selectinload, noload
 
 from app.models.billing.quotation_models import Quotation, QuotationItem
+from app.models.billing.quotation_view import QuotationView
+from app.models.billing.quotation_detail_view import QuotationDetailView
 from app.models.masters.customer_models import Customer
 from app.models.masters.product_models import Product
 from app.models.enums.quotation_status import QuotationStatus
@@ -18,7 +20,6 @@ from app.schemas.billing.quotation_schemas import (
     QuotationCreate,
     QuotationUpdate,
     QuotationOut,
-    QuotationItemOut,
     QuotationListData,
     QuotationListItem,
 )
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 GST_RATE = Decimal(os.getenv("GST_RATE", "0.18"))
 
+# =====================================================
+# HELPERS
+# =====================================================
 
 def generate_item_signature(items: List[tuple[int, int]]) -> str:
     normalized = sorted(f"{pid}:{qty}" for pid, qty in items)
@@ -71,20 +75,15 @@ async def recalculate_totals(q: Quotation) -> None:
     _apply_gst_amounts(q)
 
 
-async def _get_quotation_with_items(
-    db: AsyncSession,
-    quotation_id: int,
-) -> Quotation:
+# =====================================================
+# INTERNAL FETCHERS
+# =====================================================
+
+async def _get_quotation_with_items(db: AsyncSession, quotation_id: int) -> Quotation:
     result = await db.execute(
         select(Quotation)
-        .options(
-            selectinload(Quotation.items),
-            noload(Quotation.customer),
-        )
-        .where(
-            Quotation.id == quotation_id,
-            Quotation.is_deleted.is_(False),
-        )
+        .options(selectinload(Quotation.items), noload(Quotation.customer))
+        .where(Quotation.id == quotation_id, Quotation.is_deleted.is_(False))
     )
     q = result.scalar_one_or_none()
     if not q:
@@ -92,20 +91,11 @@ async def _get_quotation_with_items(
     return q
 
 
-async def _get_quotation_for_update(
-    db: AsyncSession,
-    quotation_id: int,
-) -> Quotation:
+async def _get_quotation_for_update(db: AsyncSession, quotation_id: int) -> Quotation:
     result = await db.execute(
         select(Quotation)
-        .options(
-            selectinload(Quotation.items),
-            noload(Quotation.customer),
-        )
-        .where(
-            Quotation.id == quotation_id,
-            Quotation.is_deleted.is_(False),
-        )
+        .options(selectinload(Quotation.items), noload(Quotation.customer))
+        .where(Quotation.id == quotation_id, Quotation.is_deleted.is_(False))
         .with_for_update()
     )
     q = result.scalar_one_or_none()
@@ -114,10 +104,7 @@ async def _get_quotation_for_update(
     return q
 
 
-async def _fetch_products_map(
-    db: AsyncSession,
-    items,
-) -> Dict[int, Product]:
+async def _fetch_products_map(db: AsyncSession, items) -> Dict[int, Product]:
     product_ids = {i.product_id for i in items}
     result = await db.execute(
         select(Product).where(
@@ -132,10 +119,14 @@ async def _fetch_products_map(
             404,
             f"Invalid or inactive product IDs: {list(missing_ids)}",
             ErrorCode.PRODUCT_NOT_FOUND,
-            details={"missing_ids": list(missing_ids)}
+            details={"missing_ids": list(missing_ids)},
         )
     return products
 
+
+# =====================================================
+# MAPPER
+# =====================================================
 
 def _map_quotation(q: Quotation) -> QuotationOut:
     return QuotationOut(
@@ -150,32 +141,34 @@ def _map_quotation(q: Quotation) -> QuotationOut:
         description=q.description,
         notes=q.notes,
         version=q.version,
-        created_by=q.created_by_id,
-        updated_by=q.updated_by_id,
+        created_by_id=q.created_by_id,
+        updated_by_id=q.updated_by_id,
         created_by_name=q.created_by_username,
         updated_by_name=q.updated_by_username,
         created_at=q.created_at,
         updated_at=q.updated_at,
         items=[
-            QuotationItemOut(
-                id=i.id,
-                product_id=i.product_id,
-                product_name=i.product_name,
-                quantity=i.quantity,
-                unit_price=i.unit_price,
-                line_total=i.line_total,
-            )
+            {
+                "id": i.id,
+                "product_id": i.product_id,
+                "product_name": i.product_name,
+                "hsn_code": i.hsn_code,
+                "quantity": i.quantity,
+                "unit_price": i.unit_price,
+                "line_total": i.line_total,
+                "sku": getattr(i.product, "sku", None),
+                "category": getattr(i.product, "category", None),
+            }
             for i in q.items
-            if not i.is_deleted
         ],
     )
 
 
-async def create_quotation(
-    db: AsyncSession,
-    payload: QuotationCreate,
-    user,
-) -> QuotationOut:
+# =====================================================
+# CREATE
+# =====================================================
+
+async def create_quotation(db: AsyncSession, payload: QuotationCreate, user) -> QuotationOut:
     customer = await db.get(Customer, payload.customer_id)
     if not customer or not customer.is_active:
         raise AppException(404, "Customer not found", ErrorCode.CUSTOMER_NOT_FOUND)
@@ -183,9 +176,7 @@ async def create_quotation(
     if not payload.items:
         raise AppException(400, "Quotation must contain at least one item", ErrorCode.VALIDATION_ERROR)
 
-    signature = generate_item_signature(
-        [(i.product_id, i.quantity) for i in payload.items]
-    )
+    signature = generate_item_signature([(i.product_id, i.quantity) for i in payload.items])
 
     exists_draft = await db.scalar(
         select(
@@ -234,6 +225,7 @@ async def create_quotation(
         QuotationItem(
             product_id=p.id,
             product_name=p.name,
+            hsn_code=p.hsn_code,
             quantity=i.quantity,
             unit_price=p.price,
             line_total=p.price * i.quantity,
@@ -265,103 +257,98 @@ async def create_quotation(
     return result
 
 
-async def get_quotation(
-    db: AsyncSession,
-    quotation_id: int,
-) -> QuotationOut:
-    q = await _get_quotation_with_items(db, quotation_id)
-    return _map_quotation(q)
+# =====================================================
+# GET (DETAIL VIEW)
+# =====================================================
 
+async def get_quotation(db: AsyncSession, quotation_id: int):
+    quotation = await db.scalar(
+        select(QuotationDetailView).where(QuotationDetailView.id == quotation_id)
+    )
+    if not quotation:
+        raise AppException(404, "Quotation not found", ErrorCode.QUOTATION_NOT_FOUND)
+    return quotation
+
+
+# =====================================================
+# LIST
+# =====================================================
 
 async def list_quotations(
     db: AsyncSession,
+    *,
     customer_id: int | None = None,
     status: str | None = None,
+    search: str | None = None,
     page: int = 1,
     page_size: int = 20,
     sort_by: str = "created_at",
     order: str = "desc",
+    is_deleted: bool | None = None,
 ) -> QuotationListData:
-    base_query = (
-        select(
-            Quotation.id,
-            Quotation.quotation_number,
-            Customer.name.label("customer_name"),
-            Quotation.status,
-            Quotation.total_amount,
-            Quotation.valid_until,
-            func.count(QuotationItem.id).label("items_count"),
-        )
-        .join(Customer, Customer.id == Quotation.customer_id)
-        .outerjoin(QuotationItem, QuotationItem.quotation_id == Quotation.id)
-        .where(
-            Quotation.is_deleted.is_(False),
-            Customer.is_active.is_(True),
-        )
-        .group_by(Quotation.id, Customer.name)
-    )
+
+    query = select(QuotationView)
+
+    if is_deleted is not True:
+        query = query.where(QuotationView.is_deleted.is_(False))
 
     if customer_id:
-        base_query = base_query.where(Quotation.customer_id == customer_id)
+        query = query.where(QuotationView.customer_id == customer_id)
 
     if status:
-        base_query = base_query.where(Quotation.status == status)
+        query = query.where(QuotationView.status == status)
 
-    count_query = (
-        select(func.count(Quotation.id))
-        .join(Customer, Customer.id == Quotation.customer_id)
-        .where(
-            Quotation.is_deleted.is_(False),
-            Customer.is_active.is_(True),
-        )
-    )
-
-    if customer_id:
-        count_query = count_query.where(
-            Quotation.customer_id == customer_id
+    if search:
+        query = query.where(
+            QuotationView.customer_name.ilike(f"%{search}%")
+            | QuotationView.quotation_number.ilike(f"%{search}%")
         )
 
-    if status:
-        count_query = count_query.where(
-            Quotation.status == status
-        )
-
-    total = await db.scalar(count_query)
-
+    total = await db.scalar(select(func.count()).select_from(query.subquery())) or 0
 
     sort_map = {
-        "created_at": Quotation.created_at,
-        "quotation_number": Quotation.quotation_number,
+        "updated_at": QuotationView.updated_at,
+        "quotation_number": QuotationView.quotation_number,
+        "total_amount": QuotationView.total_amount,
     }
-    sort_col = sort_map.get(sort_by, Quotation.created_at)
 
-    result = await db.execute(
-        base_query
-        .order_by(asc(sort_col) if order == "asc" else desc(sort_col))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
+    sort_col = sort_map.get(sort_by, QuotationView.updated_at)
+    is_asc = order.lower() == "asc"
 
-    rows = result.all()
+    query = query.order_by(
+        asc(sort_col) if is_asc else desc(sort_col),
+        asc(QuotationView.id) if is_asc else desc(QuotationView.id),
+    ).offset((page - 1) * page_size).limit(page_size)
 
-    items = [
-        QuotationListItem(
-            id=r.id,
-            quotation_number=r.quotation_number,
-            customer_name=r.customer_name,
-            status=r.status,
-            items_count=r.items_count,
-            total_amount=r.total_amount,
-            valid_until=r.valid_until,
-        )
-        for r in rows
-    ]
+    rows = (await db.execute(query)).scalars().all()
 
     return QuotationListData(
-        total=total or 0,
-        items=items,
+        total=total,
+        items=[
+            QuotationListItem(
+                id=r.id,
+                quotation_number=r.quotation_number,
+                customer_id=r.customer_id,
+                customer_name=r.customer_name,
+                status=r.status,
+                items_count=r.items_count,
+                subtotal_amount=r.subtotal_amount,
+                tax_amount=r.tax_amount,
+                total_amount=r.total_amount,
+                valid_until=r.valid_until,
+                version=r.version,
+                is_deleted=r.is_deleted,
+                created_at=r.created_at,
+                created_by_name=r.created_by_name,
+            )
+            for r in rows
+        ],
     )
 
+
+# =====================================================
+# UPDATE
+# =====================================================
 
 async def update_quotation(
     db: AsyncSession,
@@ -380,9 +367,7 @@ async def update_quotation(
     changes: list[str] = []
 
     if payload.items is not None:
-        await db.execute(
-            delete(QuotationItem).where(QuotationItem.quotation_id == q.id)
-        )
+        await db.execute(delete(QuotationItem).where(QuotationItem.quotation_id == q.id))
 
         products = await _fetch_products_map(db, payload.items)
 
@@ -391,6 +376,7 @@ async def update_quotation(
                 quotation_id=q.id,
                 product_id=p.id,
                 product_name=p.name,
+                hsn_code=p.hsn_code,
                 quantity=i.quantity,
                 unit_price=p.price,
                 line_total=p.price * i.quantity,
@@ -404,7 +390,6 @@ async def update_quotation(
         q.item_signature = generate_item_signature(
             [(i.product_id, i.quantity) for i in payload.items]
         )
-
         changes.append("items")
 
     if payload.description is not None and payload.description != q.description:
@@ -414,6 +399,10 @@ async def update_quotation(
     if payload.notes is not None and payload.notes != q.notes:
         q.notes = payload.notes
         changes.append("notes")
+
+    if payload.is_inter_state is not None and payload.is_inter_state != q.is_inter_state:
+        q.is_inter_state = payload.is_inter_state
+        changes.append("is_inter_state")
 
     if payload.valid_until is not None and payload.valid_until != q.valid_until:
         q.valid_until = payload.valid_until
@@ -430,7 +419,6 @@ async def update_quotation(
     await db.flush()
 
     result = _map_quotation(q)
-
     await db.commit()
 
     await emit_activity(
@@ -446,6 +434,10 @@ async def update_quotation(
 
     return result
 
+
+# =====================================================
+# APPROVE
+# =====================================================
 
 async def approve_quotation(
     db: AsyncSession,
@@ -489,6 +481,10 @@ async def approve_quotation(
     return _map_quotation(q)
 
 
+# =====================================================
+# DELETE
+# =====================================================
+
 async def delete_quotation(
     db: AsyncSession,
     quotation_id: int,
@@ -508,7 +504,6 @@ async def delete_quotation(
     q.updated_by_id = user.id
 
     result = _map_quotation(q)
-
     await db.commit()
 
     await emit_activity(
@@ -523,6 +518,10 @@ async def delete_quotation(
 
     return result
 
+
+# =====================================================
+# CONVERT TO INVOICE
+# =====================================================
 
 async def convert_quotation_to_invoice(
     db: AsyncSession,

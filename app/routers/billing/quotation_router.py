@@ -10,6 +10,7 @@ from app.schemas.billing.quotation_schemas import (
     QuotationUpdate,
     QuotationOut,
     QuotationListData,
+    QuotationDetailViewOut
 )
 
 from app.services.billing.quotation_service import (
@@ -72,20 +73,17 @@ async def list_quotations_ready_for_invoice_api(
 
 @router.get(
     "/{quotation_id}",
-    response_model=APIResponse[QuotationOut],
+    response_model=APIResponse[QuotationDetailViewOut],
 )
 async def get_quotation_api(
     quotation_id: int,
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin", "sales", "cashier"])),
 ):
-    quotation = await get_quotation(
-        db=db,
-        quotation_id=quotation_id,
-    )
+    data = await get_quotation(db, quotation_id)
     return success_response(
         "Quotation retrieved successfully",
-        quotation,
+        data,
     )
 
 
@@ -96,12 +94,13 @@ async def get_quotation_api(
 async def list_quotations_api(
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin", "sales", "cashier"])),
-    customer_id: int | None = Query(None, description="Filter by customer"),
-    status: str | None = Query(None, description="Filter by status (e.g., draft, approved)"),
+    customer_id: int | None = Query(None),
+    status: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort_by: str = Query("created_at"),
     order: str = Query("desc"),
+    is_deleted: bool | None = Query(None),  # ✅ CHANGE
 ):
     data = await list_quotations(
         db=db,
@@ -111,11 +110,10 @@ async def list_quotations_api(
         page_size=page_size,
         sort_by=sort_by,
         order=order,
+        is_deleted=is_deleted,
     )
-    return success_response(
-        "Quotations retrieved successfully",
-        data,
-    )
+    return success_response("Quotations retrieved successfully", data)
+
 
 
 @router.patch(

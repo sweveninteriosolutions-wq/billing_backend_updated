@@ -55,6 +55,7 @@ class QuotationItem(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     quotation_id = Column(Integer, ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
     product_name = Column(String, nullable=False)
+    hsn_code = Column(Integer, nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(12, 2), nullable=False)
     line_total = Column(Numeric(14, 2), nullable=False)

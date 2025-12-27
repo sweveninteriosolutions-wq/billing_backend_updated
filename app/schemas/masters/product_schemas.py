@@ -29,6 +29,7 @@ class ProductOut(BaseModel):
     id: int
     sku: str
     name: str
+    hsn_code: int
     category: Optional[str]
     price: Decimal
     min_stock_threshold: int
