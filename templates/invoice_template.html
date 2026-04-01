@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {
+    size: A4;
+    margin: 12mm 14mm 14mm 14mm;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    color: #1a1a1a;
+    background: #fff;
+  }
+
+  /* ══════════════ HEADER ══════════════ */
+  .header-outer {
+    width: 100%;
+    border-bottom: 2.5px solid #7a3b5e;
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+  }
+  .header-table { width: 100%; border-collapse: collapse; }
+  .header-left  { width: 62%; vertical-align: top; padding: 4px 0; }
+  .header-right { width: 38%; vertical-align: top; text-align: right; padding: 4px 0; }
+
+  .logo-img     { height: 56px; margin-bottom: 4px; }
+  .company-name {
+    font-size: 21pt;
+    font-weight: bold;
+    color: #7a3b5e;
+    letter-spacing: 1px;
+    line-height: 1.1;
+  }
+  .company-partners {
+    font-size: 8.5pt;
+    color: #444;
+    margin-top: 2px;
+  }
+  .company-address {
+    font-size: 8.5pt;
+    color: #444;
+    margin-top: 1px;
+  }
+  .company-address strong { color: #222; }
+
+  .doc-title-box {
+    display: inline-block;
+    border: 2px solid #1a1a1a;
+    padding: 4px 16px;
+    font-size: 16pt;
+    font-weight: bold;
+    letter-spacing: 3px;
+    margin-bottom: 6px;
+  }
+  .gstin-line {
+    font-size: 8.5pt;
+    color: #333;
+    margin-top: 3px;
+    line-height: 1.5;
+  }
+  .gstin-line strong { color: #111; }
+
+  /* ══════════════ META / CUSTOMER ══════════════ */
+  .meta-block {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4px;
+    margin-bottom: 4px;
+  }
+  .meta-block td {
+    padding: 2px 4px;
+    font-size: 9.5pt;
+    vertical-align: top;
+  }
+  .meta-label { font-weight: bold; color: #222; white-space: nowrap; }
+  .meta-value { color: #333; }
+  .divider-bold { border-top: 2px solid #1a1a1a; margin: 5px 0; }
+  .divider-thin { border-top: 1px solid #bbb;    margin: 4px 0; }
+
+  /* ══════════════ ITEMS TABLE ══════════════ */
+  .items-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+  }
+  .items-table th {
+    background-color: #f2e8ef;
+    border: 1px solid #999;
+    padding: 5px 7px;
+    font-size: 9pt;
+    font-weight: bold;
+    text-align: center;
+    color: #222;
+  }
+  .items-table td {
+    border: 1px solid #ccc;
+    padding: 5px 7px;
+    font-size: 9pt;
+    vertical-align: top;
+    color: #222;
+  }
+  .col-sr   { width: 5%;  text-align: center; }
+  .col-desc { width: 47%; text-align: left; }
+  .col-qty  { width: 9%;  text-align: center; }
+  .col-rate { width: 19%; text-align: right; }
+  .col-amt  { width: 20%; text-align: right; }
+
+  .item-desc-main { font-weight: normal; }
+  .item-sub       { font-size: 8pt; color: #666; margin-top: 1px; }
+
+  .blank-row td   { height: 20px; border-color: #ddd; }
+  .items-table tr:nth-child(even) td { background-color: #fdf8fb; }
+
+  /* ══════════════ TOTALS ══════════════ */
+  .totals-wrapper { margin-top: 0; }
+  .totals-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .totals-table td {
+    padding: 4px 8px;
+    font-size: 9pt;
+    border: 1px solid #ccc;
+  }
+  .totals-spacer { border: none !important; width: 56%; }
+  .totals-label  { text-align: right; font-weight: bold; width: 24%; }
+  .totals-value  { text-align: right; width: 20%; }
+  .gst-row td    { font-size: 8.5pt; color: #555; }
+  .grand-row td  { font-weight: bold; font-size: 10pt; background-color: #f2e8ef; }
+  .balance-row td{ font-weight: bold; font-size: 10pt; background-color: #fdecea; color: #b00; }
+
+  /* ══════════════ FOOTER / SIGNATURE ══════════════ */
+  .footer-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+  }
+  .footer-table td {
+    vertical-align: bottom;
+    font-size: 9pt;
+    padding: 0 4px;
+  }
+  .footer-left  { width: 55%; }
+  .footer-right { width: 45%; text-align: right; }
+  .note-text    { font-size: 8pt; color: #666; font-style: italic; margin-bottom: 4px; }
+  .sig-for      { font-size: 9pt; color: #333; margin-bottom: 40px; }
+  .sig-line     { border-top: 1px solid #888; margin-top: 2px; }
+  .sig-label    { font-size: 9pt; font-weight: bold; color: #222; text-align: right; margin-top: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════ HEADER ═══════════════════════════════════════ -->
+<div class="header-outer">
+  <table class="header-table">
+    <tr>
+      <td class="header-left">
+        {% if logo_base64 %}
+          <img src="data:image/png;base64,{{ logo_base64 }}" class="logo-img" /><br/>
+        {% endif %}
+        <div class="company-name">{{ company.name | upper }}</div>
+        <div class="company-partners">Managing Partners : {{ company.partners }}</div>
+        <div class="company-address">{{ company.address_line1 }},</div>
+        <div class="company-address"><strong>{{ company.address_line2 }}</strong></div>
+      </td>
+      <td class="header-right">
+        <div class="doc-title-box">{{ doc_type | upper }}</div>
+        <div class="gstin-line"><strong>GSTIN.</strong> {{ company.gstin }}</div>
+        <div class="gstin-line"><strong>Cell :</strong> {{ company.phone }}</div>
+        {% if company.phone2 %}
+        <div class="gstin-line">{{ company.phone2 }}</div>
+        {% endif %}
+        {% if company.email %}
+        <div class="gstin-line">{{ company.email }}</div>
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════════ META ═══════════════════════════════════════ -->
+<table class="meta-block">
+  <tr>
+    <td style="width:50%">
+      <span class="meta-label">No. &nbsp;</span>
+      <span class="meta-value">{{ document_number }}</span>
+    </td>
+    <td style="width:50%; text-align:right;">
+      <span class="meta-label">Date : &nbsp;</span>
+      <span class="meta-value">{{ date }}</span>
+    </td>
+  </tr>
+  {% if customer.name %}
+  <tr>
+    <td colspan="2">
+      <span class="meta-label">Sri / M/s : &nbsp;</span>
+      <span class="meta-value">{{ customer.name }}
+        {% if customer.gstin %}&nbsp;&nbsp; | &nbsp;&nbsp;<span class="meta-label">GSTIN :</span> {{ customer.gstin }}{% endif %}
+      </span>
+    </td>
+  </tr>
+  {% endif %}
+  {% if customer.address %}
+  <tr>
+    <td colspan="2">
+      <span class="meta-label">Address : &nbsp;</span>
+      <span class="meta-value">{{ customer.address }}</span>
+    </td>
+  </tr>
+  {% endif %}
+  {% if customer.phone %}
+  <tr>
+    <td>
+      <span class="meta-label">Phone : &nbsp;</span>
+      <span class="meta-value">{{ customer.phone }}</span>
+    </td>
+    {% if valid_until %}
+    <td style="text-align:right;">
+      <span class="meta-label">Valid Until : &nbsp;</span>
+      <span class="meta-value">{{ valid_until }}</span>
+    </td>
+    {% endif %}
+  </tr>
+  {% endif %}
+</table>
+
+<div class="divider-thin"></div>
+
+<!-- ═══════════════════════════════════════ ITEMS TABLE ═══════════════════════════════════════ -->
+<table class="items-table">
+  <thead>
+    <tr>
+      <th class="col-sr">Sr. No.</th>
+      <th class="col-desc">Particulars</th>
+      <th class="col-qty">Qty.</th>
+      <th class="col-rate">Rate (&#8377;)</th>
+      <th class="col-amt">Amount (&#8377;)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td class="col-sr">{{ loop.index }}</td>
+      <td class="col-desc">
+        <span class="item-desc-main">{{ item.name }}</span>
+        {% if item.description %}
+          <div class="item-sub">{{ item.description }}</div>
+        {% endif %}
+        {% if item.hsn_code %}
+          <div class="item-sub">HSN: {{ item.hsn_code }}</div>
+        {% endif %}
+      </td>
+      <td class="col-qty">{{ item.quantity }}</td>
+      <td class="col-rate">{{ "%.2f"|format(item.unit_price) }}</td>
+      <td class="col-amt">{{ "%.2f"|format(item.line_total) }}</td>
+    </tr>
+    {% endfor %}
+    {% for i in range([8 - items|length, 0]|max) %}
+    <tr class="blank-row">
+      <td class="col-sr"></td><td class="col-desc"></td>
+      <td class="col-qty"></td><td class="col-rate"></td><td class="col-amt"></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════ TOTALS ═══════════════════════════════════════ -->
+<div class="totals-wrapper">
+<table class="totals-table">
+
+  {% if subtotal is not none and subtotal != total %}
+  <tr>
+    <td class="totals-spacer"></td>
+    <td class="totals-label">Sub Total</td>
+    <td class="totals-value">&#8377; {{ "%.2f"|format(subtotal) }}</td>
+  </tr>
+  {% endif %}
+
+  {% if discount and discount > 0 %}
+  <tr class="gst-row">
+    <td class="totals-spacer"></td>
+    <td class="totals-label">Discount</td>
+    <td class="totals-value">&minus; &#8377; {{ "%.2f"|format(discount) }}</td>
+  </tr>
+  {% endif %}
+
+  {% if is_inter_state %}
+    {% if igst_rate and igst_rate > 0 %}
+    <tr class="gst-row">
+      <td class="totals-spacer"></td>
+      <td class="totals-label">IGST @ {{ igst_rate }}%</td>
+      <td class="totals-value">&#8377; {{ "%.2f"|format(igst_amount) }}</td>
+    </tr>
+    {% endif %}
+  {% else %}
+    {% if cgst_rate and cgst_rate > 0 %}
+    <tr class="gst-row">
+      <td class="totals-spacer"></td>
+      <td class="totals-label">CGST @ {{ cgst_rate }}%</td>
+      <td class="totals-value">&#8377; {{ "%.2f"|format(cgst_amount) }}</td>
+    </tr>
+    <tr class="gst-row">
+      <td class="totals-spacer"></td>
+      <td class="totals-label">SGST @ {{ sgst_rate }}%</td>
+      <td class="totals-value">&#8377; {{ "%.2f"|format(sgst_amount) }}</td>
+    </tr>
+    {% endif %}
+  {% endif %}
+
+  <tr class="grand-row">
+    <td class="totals-spacer"></td>
+    <td class="totals-label">TOTAL</td>
+    <td class="totals-value">&#8377; {{ "%.2f"|format(total) }}</td>
+  </tr>
+
+  {% if total_paid is not none and total_paid > 0 %}
+  <tr class="gst-row">
+    <td class="totals-spacer"></td>
+    <td class="totals-label">Amount Paid</td>
+    <td class="totals-value">&#8377; {{ "%.2f"|format(total_paid) }}</td>
+  </tr>
+  {% endif %}
+
+  {% if balance_due is not none and balance_due > 0 %}
+  <tr class="balance-row">
+    <td class="totals-spacer"></td>
+    <td class="totals-label">Balance Due</td>
+    <td class="totals-value">&#8377; {{ "%.2f"|format(balance_due) }}</td>
+  </tr>
+  {% endif %}
+
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════ FOOTER ═══════════════════════════════════════ -->
+<table class="footer-table">
+  <tr>
+    <td class="footer-left">
+      {% if notes %}
+      <p class="note-text">&#9656; {{ notes }}</p>
+      {% endif %}
+      <p class="note-text">This is a computer-generated {{ doc_type }}.</p>
+    </td>
+    <td class="footer-right">
+      <p class="sig-for">For <strong>{{ company.name }}</strong></p>
+      <div class="sig-line"></div>
+      <p class="sig-label">Managing Partners</p>
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>

@@ -268,13 +268,87 @@ async def create_quotation(db: AsyncSession, payload: QuotationCreate, user) -> 
 # GET (DETAIL VIEW)
 # =====================================================
 
-async def get_quotation(db: AsyncSession, quotation_id: int):
-    quotation = await db.scalar(
-        select(QuotationDetailView).where(QuotationDetailView.id == quotation_id)
+async def get_quotation(db: AsyncSession, quotation_id: int) -> "QuotationDetailViewOut":
+    from app.models.users.user_models import User
+    from app.models.masters.customer_models import Customer as CustomerModel
+    from app.schemas.billing.quotation_schemas import (
+        QuotationDetailViewOut, CustomerOut, QuotationItemDetailOut
     )
-    if not quotation:
+
+    result = await db.execute(
+        select(Quotation)
+        .options(
+            selectinload(Quotation.items),
+            noload(Quotation.customer),
+        )
+        .where(Quotation.id == quotation_id, Quotation.is_deleted.is_(False))
+    )
+    q = result.scalar_one_or_none()
+    if not q:
         raise AppException(404, "Quotation not found", ErrorCode.QUOTATION_NOT_FOUND)
-    return quotation
+
+    # Fetch customer
+    customer = await db.get(CustomerModel, q.customer_id)
+    if not customer:
+        raise AppException(404, "Customer not found", ErrorCode.CUSTOMER_NOT_FOUND)
+
+    # Fetch user names
+    user_ids = {uid for uid in [q.created_by_id, q.updated_by_id] if uid}
+    user_name_map: dict[int, str] = {}
+    if user_ids:
+        u_rows = await db.execute(select(User.id, User.username).where(User.id.in_(user_ids)))
+        user_name_map = {r.id: r.username for r in u_rows}
+
+    return QuotationDetailViewOut(
+        id=q.id,
+        quotation_number=q.quotation_number,
+        customer=CustomerOut(
+            id=customer.id,
+            customer_code=customer.customer_code,
+            name=customer.name,
+            email=customer.email or "",
+            phone=customer.phone,
+            gstin=customer.gstin,
+            address=customer.address if isinstance(customer.address, dict) else None,
+            is_active=customer.is_active,
+        ),
+        status=q.status,
+        valid_until=q.valid_until,
+        subtotal_amount=q.subtotal_amount,
+        tax_amount=q.tax_amount,
+        total_amount=q.total_amount,
+        is_inter_state=q.is_inter_state,
+        cgst_rate=q.cgst_rate,
+        sgst_rate=q.sgst_rate,
+        igst_rate=q.igst_rate,
+        cgst_amount=q.cgst_amount,
+        sgst_amount=q.sgst_amount,
+        igst_amount=q.igst_amount,
+        description=q.description,
+        notes=q.notes,
+        additional_data=None,
+        item_signature=q.item_signature,
+        version=q.version,
+        created_at=q.created_at,
+        updated_at=q.updated_at,
+        created_by_name=user_name_map.get(q.created_by_id) if q.created_by_id else None,
+        updated_by_name=user_name_map.get(q.updated_by_id) if q.updated_by_id else None,
+        items=[
+            QuotationItemDetailOut(
+                id=i.id,
+                product_id=i.product_id,
+                product_name=i.product_name,
+                sku=i.__dict__.get("product") and i.__dict__["product"].sku,
+                hsn_code=i.hsn_code,
+                category=i.__dict__.get("product") and i.__dict__["product"].category,
+                quantity=i.quantity,
+                unit_price=i.unit_price,
+                line_total=i.line_total,
+            )
+            for i in q.items
+            if not i.is_deleted
+        ],
+    )
 
 
 # =====================================================

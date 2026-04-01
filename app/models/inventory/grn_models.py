@@ -44,6 +44,7 @@ class GRN(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     item_signature = Column(String(128), nullable=False, index=True)
 
     supplier = relationship("Supplier", back_populates="grns", lazy="selectin")
+    location = relationship("InventoryLocation", foreign_keys=[location_id], lazy="selectin")
     # ERP-042: Canonical FK relationship — use this in all new code.
     purchase_order_rel = relationship("PurchaseOrder", back_populates="grns", lazy="selectin")
     items = relationship("GRNItem", back_populates="grn", cascade="all, delete-orphan", lazy="selectin")

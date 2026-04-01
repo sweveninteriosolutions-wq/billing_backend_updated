@@ -47,6 +47,9 @@ async def list_movements(
     base_query = select(InventoryMovement).options(
         selectinload(InventoryMovement.product),
         selectinload(InventoryMovement.location),
+        # PERF-P1-4 FIX: AuditMixin sets lazy="raise" on created_by to prevent N+1 queries.
+        # Must be explicitly loaded here since we access m.created_by.username below.
+        selectinload(InventoryMovement.created_by),
     )
 
     if product_id:

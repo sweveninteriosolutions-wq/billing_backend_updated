@@ -28,6 +28,9 @@ from .inventory.purchase_order_router import router as purchase_order_router
 from .inventory.warehouse_router import router as warehouse_router
 from .reports.reports_router import router as reports_router
 
+# PDF generation router (invoice + quotation, Jinja2 template based)
+from .pdf_router import router as pdf_router
+
 
 __all__ = [
 "user_router",
@@ -56,4 +59,6 @@ __all__ = [
 "purchase_order_router",
 "warehouse_router",
 "reports_router",
+
+"pdf_router",
 ]

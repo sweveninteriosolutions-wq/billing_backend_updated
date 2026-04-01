@@ -18,6 +18,7 @@ from app.schemas.inventory.inventory_balance_schemas import (
 router = APIRouter(
     prefix="/inventory/balances",
     tags=["Inventory Balances"],
+    redirect_slashes=False,
 )
 
 

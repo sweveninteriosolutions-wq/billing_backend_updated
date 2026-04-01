@@ -31,6 +31,7 @@ from app.routers import (
     purchase_order_router,
     warehouse_router,
     reports_router,
+    pdf_router,
 )
 
 from app.core.db import init_models
@@ -198,3 +199,6 @@ app.include_router(file_upload_router)
 app.include_router(purchase_order_router)
 app.include_router(warehouse_router)
 app.include_router(reports_router)
+
+# PDF generation (Jinja2 template + xhtml2pdf)
+app.include_router(pdf_router)

@@ -64,16 +64,16 @@ async def list_inventory_balances(
 
     items = [
         {
-            "product_id": r.product_id,
-            "product_name": r.product_name,
-            "sku": r.sku,
-            "location_id": r.location_id,
-            "location_code": r.location_code,
-            "quantity": r.quantity,
-            "min_stock_threshold": r.min_stock_threshold,
-            "updated_at": r.updated_at,
+            "product_id": row.InventoryBalanceView.product_id,
+            "product_name": row.InventoryBalanceView.product_name,
+            "sku": row.InventoryBalanceView.sku,
+            "location_id": row.InventoryBalanceView.location_id,
+            "location_code": row.InventoryBalanceView.location_code,
+            "quantity": row.InventoryBalanceView.quantity,
+            "min_stock_threshold": row.InventoryBalanceView.min_stock_threshold,
+            "updated_at": row.InventoryBalanceView.updated_at,
         }
-        for r, _ in rows
+        for row in rows
     ]
 
     return {"total": total, "items": items}

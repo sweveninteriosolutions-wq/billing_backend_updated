@@ -116,8 +116,33 @@ ALLOWED_UPLOAD_EXTENSIONS = {"jpg", "jpeg", "png", "pdf"}
 # ERP-030 FIXED: invoice_pdf.py now imports these instead of reading os.getenv() directly.
 # =====================================================
 COMPANY_NAME = os.getenv("COMPANY_NAME", "Varasidhi Furnitures")
-COMPANY_GSTIN = os.getenv("COMPANY_GSTIN", "29XXXXX0000X1Z5")
-COMPANY_ADDRESS_LINE1 = os.getenv("COMPANY_ADDRESS_LINE1", "No. 1, Main Road")
-COMPANY_ADDRESS_LINE2 = os.getenv("COMPANY_ADDRESS_LINE2", "Bengaluru, Karnataka - 560001")
-COMPANY_PHONE = os.getenv("COMPANY_PHONE", "+91 98765 43210")
+COMPANY_GSTIN = os.getenv("COMPANY_GSTIN", "37ABBFV5240P1ZO")
+COMPANY_ADDRESS_LINE1 = os.getenv("COMPANY_ADDRESS_LINE1", "Near Ayyapaswamy Temple, Narsapur Road")
+COMPANY_ADDRESS_LINE2 = os.getenv("COMPANY_ADDRESS_LINE2", "PALAKOL - 534 260")
+COMPANY_PHONE = os.getenv("COMPANY_PHONE", "8886464271")
 COMPANY_EMAIL = os.getenv("COMPANY_EMAIL", "billing@varasidhi.com")
+
+# =====================================================
+# LOGO PATHS (for PDF generation)
+# Set LOGO_PATH in .env to override the default frontend public folder path.
+# The logo is embedded as base64 in the PDF — no web server needed at render time.
+# =====================================================
+_default_logo = os.path.join(
+    os.path.dirname(__file__),                    # app/core/
+    "..", "..", "..",                             # → project root
+    "frontend_billing", "public", "logo.png",    # → frontend public folder
+)
+LOGO_PATH = os.getenv(
+    "LOGO_PATH",
+    os.path.normpath(_default_logo),
+)
+
+_default_logo_small = os.path.join(
+    os.path.dirname(__file__),
+    "..", "..", "..",
+    "frontend_billing", "public", "logo_1.png",
+)
+LOGO_SMALL_PATH = os.getenv(
+    "LOGO_SMALL_PATH",
+    os.path.normpath(_default_logo_small),
+)

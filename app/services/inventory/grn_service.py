@@ -38,6 +38,14 @@ from app.schemas.inventory.grn_schemas import (
     GRNCreateSchema,
     GRNUpdateSchema,
     GRNOutSchema,
+    GRNViewSchema,
+    GRNItemViewSchema,
+    GRNSummaryViewSchema,
+    GRNAuditViewSchema,
+    SupplierSchema,
+    LocationSchema,
+    ProductSchema,
+    GRNListViewData,
 )
 
 logger = logging.getLogger(__name__)
@@ -303,7 +311,7 @@ async def list_grns(
     page_size: int,
     sort_by: str = "created_at",
     order: str = "desc",
-) -> dict:
+) -> GRNListViewData:
     filters = [GRN.is_deleted.is_(False)]
 
     if supplier_id:
@@ -345,31 +353,57 @@ async def list_grns(
 
     grns = result.scalars().all()
 
-    return {
-        "total": total or 0,
-        "items": [
-            GRNOutSchema(
-                id=grn.id,
-                supplier_id=grn.supplier_id,
-                location_id=grn.location_id,
-                purchase_order=grn.purchase_order,
-                bill_number=grn.bill_number,
-                notes=grn.notes,
-                status=grn.status,
-                version=grn.version,
-                created_at=grn.created_at,
-                created_by=grn.created_by_id,
-                updated_by=grn.updated_by_id,
-                created_by_name=grn.created_by_username,
-                updated_by_name=grn.updated_by_username,
-                items=[
-                    {"product_id": i.product_id, "quantity": i.quantity, "unit_cost": i.unit_cost}
-                    for i in grn.items
-                ],
+    def _build_view(grn: GRN) -> GRNViewSchema:
+        grn_items = [
+            GRNItemViewSchema(
+                product=ProductSchema(
+                    id=i.product.id,
+                    name=i.product.name,
+                    sku=i.product.sku,
+                ),
+                quantity=i.quantity,
+                unit_cost=i.unit_cost,
+                total=i.quantity * i.unit_cost,
             )
-            for grn in grns
-        ],
-    }
+            for i in grn.items
+        ]
+        total_value = sum(item.total for item in grn_items)
+        supplier = grn.__dict__.get("supplier")
+        location = grn.__dict__.get("location")
+        cb = grn.__dict__.get("created_by")
+        ub = grn.__dict__.get("updated_by")
+        return GRNViewSchema(
+            id=grn.id,
+            code=f"GRN-{grn.id:04d}",
+            status=grn.status,
+            purchase_order=grn.purchase_order or "",
+            bill_number=grn.bill_number or "",
+            version=grn.version,
+            supplier=SupplierSchema(
+                id=supplier.id if supplier else grn.supplier_id,
+                name=supplier.name if supplier else "",
+            ),
+            location=LocationSchema(
+                id=location.id if location else grn.location_id,
+                name=location.name if location else "",
+            ),
+            items=grn_items,
+            summary=GRNSummaryViewSchema(
+                no_of_items=len(grn_items),
+                total_value=total_value,
+            ),
+            audit=GRNAuditViewSchema(
+                created_at=grn.created_at,
+                created_by=cb.username if cb else "",
+                updated_at=grn.updated_at,
+                updated_by=ub.username if ub else None,
+            ),
+        )
+
+    return GRNListViewData(
+        total=total or 0,
+        items=[_build_view(grn) for grn in grns],
+    )
 
 # Keep old name as alias for any existing router calls — remove in next cleanup sprint
 list_grns_view = list_grns
