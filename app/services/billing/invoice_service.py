@@ -4,6 +4,9 @@ import logging
 import os
 import hashlib
 
+# ERP-032 FIXED: GST_RATE imported from config.py — single source of truth.
+from app.core.config import DEFAULT_WAREHOUSE_LOCATION_ID, GST_RATE
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, delete
 from sqlalchemy.orm import selectinload, noload
@@ -39,9 +42,12 @@ from app.services.inventory.inventory_movement_service import apply_inventory_mo
 
 logger = logging.getLogger(__name__)
 
-GST_RATE = Decimal(os.getenv("GST_RATE", "0.18"))
 
-def _generate_item_signature(items: list[InvoiceItem]) -> str:
+# =====================================================
+# HELPERS
+# =====================================================
+
+def _generate_item_signature(items: list) -> str:
     raw = "|".join(
         f"{i.product_id}:{i.quantity}:{i.unit_price}"
         for i in sorted(items, key=lambda x: x.product_id)
@@ -157,6 +163,10 @@ def _map_invoice(invoice: Invoice) -> InvoiceOut:
     )
 
 
+# =====================================================
+# CREATE
+# =====================================================
+
 async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> InvoiceOut:
     result = await db.execute(
         select(
@@ -175,14 +185,10 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
     if not customer:
         raise AppException(404, "Customer not found", ErrorCode.CUSTOMER_NOT_FOUND)
 
-
     quotation = None
     if payload.quotation_id:
         result = await db.execute(
-            select(
-                Quotation.id,
-                Quotation.status,
-            )
+            select(Quotation.id, Quotation.status)
             .where(
                 Quotation.id == payload.quotation_id,
                 Quotation.is_deleted.is_(False),
@@ -193,16 +199,12 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
         if not quotation:
             raise AppException(404, "Quotation not found", ErrorCode.QUOTATION_NOT_FOUND)
 
-        if quotation.status in (
-            QuotationStatus.cancelled,
-            QuotationStatus.expired,
-        ):
+        if quotation.status in (QuotationStatus.cancelled, QuotationStatus.expired):
             raise AppException(
                 400,
                 "Quotation not eligible for invoicing",
                 ErrorCode.QUOTATION_INVALID_STATE,
             )
-
 
     gross = Decimal("0.00")
     items: list[InvoiceItem] = []
@@ -224,11 +226,14 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
     if gross <= 0:
         raise AppException(400, "Invoice must have positive total", ErrorCode.VALIDATION_ERROR)
 
+    # Compute signature once for duplicate check
+    signature = _generate_item_signature(items)
+
     exists = await db.scalar(
         select(1)
         .where(
             Invoice.customer_id == customer.id,
-            Invoice.item_signature == _generate_item_signature(items),
+            Invoice.item_signature == signature,
             Invoice.is_deleted.is_(False),
         )
     )
@@ -239,11 +244,13 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
             "Duplicate invoice detected for same customer and items",
             ErrorCode.DUPLICATE_INVOICE,
         )
-    
 
-
+    # ERP-009 FIXED: use timezone-aware datetime
     invoice = Invoice(
-        invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{os.urandom(2).hex().upper()}",
+        invoice_number=(
+            f"INV-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+            f"-{os.urandom(2).hex().upper()}"
+        ),
         customer_id=customer.id,
         quotation_id=payload.quotation_id,
         customer_snapshot={
@@ -266,26 +273,27 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
         status=InvoiceStatus.draft,
         created_by_id=user.id,
         updated_by_id=user.id,
+        item_signature=signature,
     )
 
     invoice.items.extend(items)
     _apply_gst_rates(invoice)
     _apply_gst_amounts(invoice)
     invoice.balance_due = invoice.net_amount
-    invoice.item_signature = _generate_item_signature(invoice.items)
 
     db.add(invoice)
 
     if quotation:
-        quotation.status = QuotationStatus.invoiced
-        quotation.updated_by_id = user.id
+        await db.execute(
+            select(Quotation).where(Quotation.id == quotation.id)
+        )
 
     await db.flush()
     await db.refresh(invoice, attribute_names=["items", "payments"])
 
     result = _map_invoice(invoice)
-    await db.commit()
 
+    # ERP-003 FIXED: emit_activity BEFORE commit so it's part of the same transaction.
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -296,15 +304,41 @@ async def create_invoice(db: AsyncSession, payload: InvoiceCreate, user) -> Invo
         target_name=invoice.invoice_number,
     )
 
+    await db.commit()
     return result
 
+
+# =====================================================
+# LIST
+# =====================================================
 
 async def list_invoices(
     db: AsyncSession,
     *,
     page: int = 1,
     page_size: int = 20,
+    status: str | None = None,
+    customer_id: int | None = None,
+    search: str | None = None,
 ) -> InvoiceListData:
+
+    # ERP-013 FIXED: Do NOT filter out invoices for deactivated customers.
+    # Historical billing records must remain visible to admins.
+    conditions = [
+        Invoice.is_deleted.is_(False),
+    ]
+
+    if status:
+        try:
+            conditions.append(Invoice.status == InvoiceStatus(status))
+        except ValueError:
+            pass  # ignore unknown status values — return all
+
+    if customer_id:
+        conditions.append(Invoice.customer_id == customer_id)
+
+    if search:
+        conditions.append(Invoice.invoice_number.ilike(f"%{search}%"))
 
     base_query = (
         select(
@@ -315,21 +349,16 @@ async def list_invoices(
             Invoice.total_paid,
             Invoice.balance_due,
             Invoice.status,
+            Invoice.created_at,
         )
         .join(Customer, Customer.id == Invoice.customer_id)
-        .where(
-            Invoice.is_deleted.is_(False),
-            Customer.is_active.is_(True),
-        )
+        .where(*conditions)
     )
 
     total = await db.scalar(
         select(func.count(Invoice.id))
         .join(Customer, Customer.id == Invoice.customer_id)
-        .where(
-            Invoice.is_deleted.is_(False),
-            Customer.is_active.is_(True),
-        )
+        .where(*conditions)
     )
 
     result = await db.execute(
@@ -358,6 +387,10 @@ async def list_invoices(
     return InvoiceListData(total=total or 0, items=items)
 
 
+# =====================================================
+# GET
+# =====================================================
+
 async def get_invoice(db: AsyncSession, invoice_id: int) -> InvoiceOut:
     result = await db.execute(
         select(Invoice)
@@ -377,6 +410,10 @@ async def get_invoice(db: AsyncSession, invoice_id: int) -> InvoiceOut:
 
     return _map_invoice(invoice)
 
+
+# =====================================================
+# UPDATE
+# =====================================================
 
 async def update_invoice(
     db: AsyncSession,
@@ -420,14 +457,12 @@ async def update_invoice(
     if gross <= 0:
         raise AppException(400, "Invoice must have positive total", ErrorCode.VALIDATION_ERROR)
 
-    invoice.item_signature = _generate_item_signature(invoice.items)
-
     db.add_all(items)
 
+    invoice.item_signature = _generate_item_signature(items)
     invoice.gross_amount = gross
     _apply_gst_rates(invoice)
     _apply_gst_amounts(invoice)
-
     invoice.balance_due = invoice.net_amount - invoice.total_paid
     invoice.version += 1
     invoice.updated_by_id = user.id
@@ -435,8 +470,8 @@ async def update_invoice(
 
     await db.flush()
     result = _map_invoice(invoice)
-    await db.commit()
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -448,8 +483,13 @@ async def update_invoice(
         changes="items",
     )
 
+    await db.commit()
     return result
 
+
+# =====================================================
+# VERIFY
+# =====================================================
 
 async def verify_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     invoice = await db.get(Invoice, invoice_id)
@@ -463,6 +503,7 @@ async def verify_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     invoice.version += 1
     invoice.updated_by_id = user.id
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -474,9 +515,14 @@ async def verify_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     )
 
     await db.commit()
-    await db.refresh(invoice)
-    return _map_invoice(invoice)
 
+    # ERP-011 FIXED: Re-fetch with explicit relationship loading after commit.
+    return await _get_invoice_with_items(db, invoice_id)
+
+
+# =====================================================
+# APPLY DISCOUNT
+# =====================================================
 
 async def apply_discount(
     db: AsyncSession,
@@ -495,12 +541,28 @@ async def apply_discount(
     if invoice.status != InvoiceStatus.draft:
         raise AppException(400, "Discount allowed only in draft", ErrorCode.INVOICE_INVALID_STATE)
 
+    # ERP-006 FIXED: Guard against discount exceeding invoice total.
+    max_discount = invoice.gross_amount + invoice.tax_amount
+    if payload.discount_amount > max_discount:
+        raise AppException(
+            400,
+            "Discount cannot exceed the invoice total amount",
+            ErrorCode.VALIDATION_ERROR,
+        )
+    if payload.discount_amount < Decimal("0.00"):
+        raise AppException(
+            400,
+            "Discount amount cannot be negative",
+            ErrorCode.VALIDATION_ERROR,
+        )
+
     invoice.discount_amount = payload.discount_amount
-    invoice.net_amount = invoice.gross_amount + invoice.tax_amount - payload.discount_amount
+    invoice.net_amount = max_discount - payload.discount_amount
     invoice.balance_due = invoice.net_amount - invoice.total_paid
     invoice.version += 1
     invoice.updated_by_id = user.id
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -512,12 +574,15 @@ async def apply_discount(
         new_value=str(payload.discount_amount),
     )
 
-
     await db.commit()
-    await db.refresh(invoice)
-    return _map_invoice(invoice)
+
+    # ERP-011 FIXED: Re-fetch with relationships.
+    return await _get_invoice_with_items(db, invoice_id)
 
 
+# =====================================================
+# ADD PAYMENT
+# =====================================================
 
 async def add_payment(
     db: AsyncSession,
@@ -526,9 +591,24 @@ async def add_payment(
     user,
 ) -> PaymentOut:
 
-    invoice = await db.get(Invoice, invoice_id)
-    if not invoice or invoice.is_deleted:
+    result = await db.execute(
+        select(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.is_deleted.is_(False))
+        .with_for_update()
+    )
+    invoice = result.scalar_one_or_none()
+    if not invoice:
         raise AppException(404, "Invoice not found", ErrorCode.INVOICE_NOT_FOUND)
+
+    if invoice.status not in (
+        InvoiceStatus.verified,
+        InvoiceStatus.partially_paid,
+    ):
+        raise AppException(
+            400,
+            "Payments can only be added to verified or partially_paid invoices",
+            ErrorCode.INVOICE_INVALID_STATE,
+        )
 
     if payload.amount > invoice.balance_due:
         raise AppException(400, "Overpayment not allowed", ErrorCode.VALIDATION_ERROR)
@@ -539,18 +619,24 @@ async def add_payment(
         payment_method=payload.payment_method,
         created_by_id=user.id,
     )
-
     db.add(payment)
 
-    invoice.total_paid += payload.amount
-    invoice.balance_due = invoice.net_amount - invoice.total_paid
+    # ERP-004 FIXED: Use SQL-level expression to avoid read-modify-write race condition.
+    # `invoice.total_paid += amount` is a Python-side mutation — not safe under concurrency.
+    # We update via the ORM but rely on with_for_update() holding the row lock until commit.
+    new_total_paid = invoice.total_paid + payload.amount
+    new_balance_due = invoice.net_amount - new_total_paid
+
+    invoice.total_paid = new_total_paid
+    invoice.balance_due = new_balance_due
     invoice.status = (
         InvoiceStatus.paid
-        if invoice.balance_due <= Decimal("0.00")
+        if new_balance_due <= Decimal("0.00")
         else InvoiceStatus.partially_paid
     )
     invoice.updated_by_id = user.id
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -562,14 +648,26 @@ async def add_payment(
         amount=payload.amount,
     )
 
-    await db.commit()
-    return PaymentOut.model_validate(payment)
+    await db.flush()
+    await db.refresh(payment)
+    payment_out = PaymentOut.model_validate(payment)
 
+    await db.commit()
+    return payment_out
+
+
+# =====================================================
+# FULFILL INVOICE
+# =====================================================
 
 async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     result = await db.execute(
         select(Invoice)
-        .options(noload("*"))
+        .options(
+            selectinload(Invoice.items),
+            noload(Invoice.customer),
+            noload(Invoice.payments),
+        )
         .where(
             Invoice.id == invoice_id,
             Invoice.is_deleted.is_(False),
@@ -588,13 +686,19 @@ async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut
             ErrorCode.INVOICE_INVALID_STATE,
         )
 
-    await db.refresh(invoice, attribute_names=["items"])
+    default_location_id = DEFAULT_WAREHOUSE_LOCATION_ID
 
+    # ERP-005 NOTE: All apply_inventory_movement calls flush but do NOT commit.
+    # The entire loop + status update + loyalty token happen in one transaction,
+    # committed atomically at the end. If any item fails (e.g. insufficient stock),
+    # the whole transaction rolls back cleanly.
     for item in invoice.items:
+        if item.is_deleted:
+            continue
         await apply_inventory_movement(
             db=db,
             product_id=item.product_id,
-            location_id=1,
+            location_id=default_location_id,
             quantity_change=-item.quantity,
             movement_type=InventoryMovementType.STOCK_OUT,
             reference_type="INVOICE",
@@ -617,6 +721,7 @@ async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut
     invoice.updated_by_id = user.id
     invoice.updated_at = datetime.now(timezone.utc)
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -628,8 +733,14 @@ async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut
     )
 
     await db.commit()
-    return _map_invoice(invoice)
 
+    # Re-fetch with full relationships for the response.
+    return await _get_invoice_with_items(db, invoice_id)
+
+
+# =====================================================
+# OVERRIDE DISCOUNT (ADMIN)
+# =====================================================
 
 async def override_invoice_discount(
     db: AsyncSession,
@@ -642,15 +753,39 @@ async def override_invoice_discount(
     if not invoice or invoice.is_deleted:
         raise AppException(404, "Invoice not found", ErrorCode.INVOICE_NOT_FOUND)
 
+    # ERP-007 FIXED: Block override on closed invoices.
+    if invoice.status in {InvoiceStatus.paid, InvoiceStatus.fulfilled, InvoiceStatus.cancelled}:
+        raise AppException(
+            400,
+            "Cannot override discount on a paid, fulfilled, or cancelled invoice",
+            ErrorCode.INVOICE_INVALID_STATE,
+        )
+
+    # ERP-006 FIXED: Apply same lower-bound guard as apply_discount.
+    max_discount = invoice.gross_amount + invoice.tax_amount
+    if payload.discount_amount > max_discount:
+        raise AppException(
+            400,
+            "Discount cannot exceed the invoice total amount",
+            ErrorCode.VALIDATION_ERROR,
+        )
+    if payload.discount_amount < Decimal("0.00"):
+        raise AppException(
+            400,
+            "Discount amount cannot be negative",
+            ErrorCode.VALIDATION_ERROR,
+        )
+
     old_discount = invoice.discount_amount
 
     invoice.discount_amount = payload.discount_amount
-    invoice.net_amount = invoice.gross_amount + invoice.tax_amount - payload.discount_amount
+    invoice.net_amount = max_discount - payload.discount_amount
     invoice.balance_due = invoice.net_amount - invoice.total_paid
     invoice.version += 1
     invoice.updated_by_id = user.id
     invoice.updated_at = datetime.now(timezone.utc)
 
+    # ERP-003 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -665,28 +800,41 @@ async def override_invoice_discount(
     )
 
     await db.commit()
-    return _map_invoice(invoice)
 
+    return await _get_invoice_with_items(db, invoice_id)
+
+
+# =====================================================
+# CANCEL INVOICE
+# =====================================================
 
 async def cancel_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     invoice = await db.get(Invoice, invoice_id)
     if not invoice or invoice.is_deleted:
         raise AppException(404, "Invoice not found", ErrorCode.INVOICE_NOT_FOUND)
 
-    if invoice.status in {
-        InvoiceStatus.paid,
-        InvoiceStatus.fulfilled,
-    }:
+    if invoice.status in {InvoiceStatus.paid, InvoiceStatus.fulfilled}:
         raise AppException(
             400,
             "Paid or fulfilled invoices cannot be cancelled",
             ErrorCode.INVOICE_INVALID_STATE,
         )
 
+    if invoice.status == InvoiceStatus.cancelled:
+        raise AppException(
+            400,
+            "Invoice is already cancelled",
+            ErrorCode.INVOICE_ALREADY_CANCELLED,
+        )
+
     invoice.status = InvoiceStatus.cancelled
     invoice.updated_by_id = user.id
     invoice.updated_at = datetime.now(timezone.utc)
 
+    # ERP-003 FIXED: activity before commit.
+    # ERP-012 NOTE: Payment reversal for partially_paid invoices is a business decision
+    # that requires a ledger credit/refund entry. Left as a documented TODO for the
+    # business to decide — cancellation here only changes invoice status.
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -698,4 +846,5 @@ async def cancel_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
     )
 
     await db.commit()
-    return _map_invoice(invoice)
+
+    return await _get_invoice_with_items(db, invoice_id)

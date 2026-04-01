@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Any
 from decimal import Decimal
 from datetime import datetime, date
 
@@ -52,7 +52,6 @@ class InvoiceCreate(BaseModel):
     is_inter_state: bool
 
 
-
 class InvoiceUpdate(BaseModel):
     version: int
     items: List[InvoiceItemUpdate]
@@ -86,6 +85,11 @@ class PaymentOut(ORMBase):
 
 # =====================================================
 # SINGLE INVOICE OUTPUT
+# ERP-031 FIXED: Added customer_snapshot field to InvoiceOut.
+#   This field is stored on the invoice row at creation time and captures the
+#   customer's name/email/phone at the point of sale — essential for audit trails
+#   and for displaying correct customer info even if the customer record is later
+#   updated or deactivated.
 # =====================================================
 class InvoiceOut(ORMBase):
     id: int
@@ -106,13 +110,16 @@ class InvoiceOut(ORMBase):
     created_at: datetime
     updated_at: Optional[datetime]
 
+    # ERP-031 FIXED: Snapshot of customer data at time of invoice creation.
+    # None for legacy invoices created before this field was added.
+    customer_snapshot: Optional[dict[str, Any]] = None
+
     items: List[InvoiceItemOut]
     payments: List[PaymentOut]
 
 
 # =====================================================
 # LIST VIEW
-# =====================================================
 # =====================================================
 class InvoiceListItem(BaseModel):
     id: int

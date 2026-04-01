@@ -1,47 +1,28 @@
+# app/services/inventory/inventory_balance_service.py
+# ERP-035 FIXED: Removed dead _map_balance function and duplicate import blocks.
+#                The file previously had two separate import sections (one from the
+#                old direct-query approach, one from the view-based approach) causing
+#                duplicate `import logging` and duplicate `from sqlalchemy import select`.
+# ERP-055 FIXED: Removed all time.perf_counter() profiling instrumentation.
+#                Profiling belongs in a dev/staging branch or APM tool, not production code.
+
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.models.inventory.inventory_balance_models import InventoryBalance
+from app.models.inventory.inventory_balance_view import InventoryBalanceView
 from app.models.masters.product_models import Product
 from app.models.inventory.inventory_location_models import InventoryLocation
-
-from app.schemas.inventory.inventory_balance_schemas import (
-    InventoryBalanceTableSchema,
-)
-
-
-import logging
+from app.schemas.inventory.inventory_balance_schemas import InventoryBalanceTableSchema
 
 logger = logging.getLogger(__name__)
 
 
 # =====================================================
-# MAPPER
+# LIST INVENTORY BALANCES
 # =====================================================
-def _map_balance(
-    balance: InventoryBalance,
-    product: Product,
-    location: InventoryLocation,
-) -> InventoryBalanceTableSchema:
-    return InventoryBalanceTableSchema(
-        product_id=product.id,
-        product_name=product.name,
-        sku=product.sku,
-        location_id=location.id,
-        location_code=location.code,
-        quantity=balance.quantity,
-        min_stock_threshold=product.min_stock_threshold,
-        updated_at=balance.updated_at,
-    )
-import time
-import logging
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.inventory.inventory_balance_view import InventoryBalanceView
-
-logger = logging.getLogger(__name__)
-
 async def list_inventory_balances(
     db: AsyncSession,
     product_id: int | None,
@@ -49,32 +30,16 @@ async def list_inventory_balances(
     search: str | None,
     page: int,
     page_size: int,
-):
-    t0 = time.perf_counter()
-    logger.info("[INV] start list_inventory_balances")
-
-    # -------------------------------------------------
-    # BUILD FILTERS (VIEW ONLY)
-    # -------------------------------------------------
+) -> dict:
     filters = []
 
     if product_id:
         filters.append(InventoryBalanceView.product_id == product_id)
-
     if location_id:
         filters.append(InventoryBalanceView.location_id == location_id)
-
     if search:
-        filters.append(
-            InventoryBalanceView.product_name.ilike(f"%{search}%")
-        )
+        filters.append(InventoryBalanceView.product_name.ilike(f"%{search}%"))
 
-    t1 = time.perf_counter()
-    logger.info("[INV] filters built", extra={"t_filters": round(t1 - t0, 4)})
-
-    # -------------------------------------------------
-    # BUILD QUERY (SINGLE, SIMPLE QUERY)
-    # -------------------------------------------------
     stmt = (
         select(
             InventoryBalanceView,
@@ -89,45 +54,13 @@ async def list_inventory_balances(
         .limit(page_size)
     )
 
-    t2 = time.perf_counter()
-    logger.info("[INV] query built", extra={"t_query_build": round(t2 - t1, 4)})
-
-    # -------------------------------------------------
-    # EXECUTE QUERY
-    # -------------------------------------------------
-    t_exec_start = time.perf_counter()
     result = await db.execute(stmt)
     rows = result.all()
-    t_exec_end = time.perf_counter()
 
-    logger.info(
-        "[INV] db.execute done",
-        extra={
-            "t_db": round(t_exec_end - t_exec_start, 4),
-            "rows": len(rows),
-        },
-    )
-
-    # -------------------------------------------------
-    # EMPTY RESULT
-    # -------------------------------------------------
     if not rows:
-        t_end = time.perf_counter()
-        logger.info(
-            "[INV] empty result",
-            extra={"t_total": round(t_end - t0, 4)},
-        )
         return {"total": 0, "items": []}
 
-    # -------------------------------------------------
-    # EXTRACT TOTAL
-    # -------------------------------------------------
     total = rows[0].total
-
-    # -------------------------------------------------
-    # MAP RESPONSE (NO JOIN OBJECTS ANYMORE)
-    # -------------------------------------------------
-    t_map_start = time.perf_counter()
 
     items = [
         {
@@ -137,43 +70,21 @@ async def list_inventory_balances(
             "location_id": r.location_id,
             "location_code": r.location_code,
             "quantity": r.quantity,
-            "min_stock_threshold": r.min_stock_threshold,  # 👈 ADD THIS
+            "min_stock_threshold": r.min_stock_threshold,
             "updated_at": r.updated_at,
         }
         for r, _ in rows
     ]
 
-
-    t_map_end = time.perf_counter()
-    logger.info(
-        "[INV] mapping done",
-        extra={"t_mapping": round(t_map_end - t_map_start, 4)},
-    )
-
-    # -------------------------------------------------
-    # FINISH
-    # -------------------------------------------------
-    t_end = time.perf_counter()
-    logger.info(
-        "[INV] end list_inventory_balances",
-        extra={
-            "t_total": round(t_end - t0, 4),
-            "page": page,
-            "page_size": page_size,
-        },
-    )
-
-    return {
-        "total": total,
-        "items": items,
-    }
+    return {"total": total, "items": items}
 
 
 # =====================================================
 # LOW STOCK ALERTS
 # =====================================================
-async def low_stock_alerts(db: AsyncSession):
-    logger.info("Fetch low stock inventory balances")
+async def low_stock_alerts(db: AsyncSession) -> list[InventoryBalanceTableSchema]:
+    """Return all product+location combinations where stock is at or below threshold."""
+    logger.info("Fetching low-stock inventory balances")
 
     stmt = (
         select(InventoryBalance, Product, InventoryLocation)
@@ -189,6 +100,15 @@ async def low_stock_alerts(db: AsyncSession):
     result = await db.execute(stmt)
 
     return [
-        _map_balance(balance, product, location)
+        InventoryBalanceTableSchema(
+            product_id=product.id,
+            product_name=product.name,
+            sku=product.sku,
+            location_id=location.id,
+            location_code=location.code,
+            quantity=balance.quantity,
+            min_stock_threshold=product.min_stock_threshold,
+            updated_at=balance.updated_at,
+        )
         for balance, product, location in result.all()
     ]

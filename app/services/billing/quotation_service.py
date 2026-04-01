@@ -1,9 +1,11 @@
 from decimal import Decimal
 from datetime import datetime, timezone
 import hashlib
-import os
 import logging
 from typing import List, Dict
+
+# ERP-033 FIXED: GST_RATE imported from config.py — removed os.getenv() call.
+from app.core.config import GST_RATE
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc, delete
@@ -31,13 +33,12 @@ from app.utils.activity_helpers import emit_activity
 
 logger = logging.getLogger(__name__)
 
-GST_RATE = Decimal(os.getenv("GST_RATE", "0.18"))
 
 # =====================================================
 # HELPERS
 # =====================================================
 
-def generate_item_signature(items: List[tuple[int, int]]) -> str:
+def generate_item_signature(items: List[tuple]) -> str:
     normalized = sorted(f"{pid}:{qty}" for pid, qty in items)
     return hashlib.sha256("|".join(normalized).encode()).hexdigest()
 
@@ -69,7 +70,8 @@ def _apply_gst_amounts(q: Quotation) -> None:
     q.total_amount = q.subtotal_amount + q.tax_amount
 
 
-async def recalculate_totals(q: Quotation) -> None:
+# ERP-015 FIXED: Removed misleading `async` — function has no awaits.
+def recalculate_totals(q: Quotation) -> None:
     q.subtotal_amount = sum(i.line_total for i in q.items if not i.is_deleted)
     _apply_gst_rates(q)
     _apply_gst_amounts(q)
@@ -104,7 +106,7 @@ async def _get_quotation_for_update(db: AsyncSession, quotation_id: int) -> Quot
     return q
 
 
-async def _fetch_products_map(db: AsyncSession, items) -> Dict[int, Product]:
+async def _fetch_products_map(db: AsyncSession, items) -> Dict[int, "Product"]:
     product_ids = {i.product_id for i in items}
     result = await db.execute(
         select(Product).where(
@@ -213,6 +215,9 @@ async def create_quotation(db: AsyncSession, payload: QuotationCreate, user) -> 
         cgst_amount=Decimal("0.00"),
         sgst_amount=Decimal("0.00"),
         igst_amount=Decimal("0.00"),
+        subtotal_amount=Decimal("0.00"),
+        tax_amount=Decimal("0.00"),
+        total_amount=Decimal("0.00"),
         created_by_id=user.id,
         updated_by_id=user.id,
     )
@@ -236,14 +241,14 @@ async def create_quotation(db: AsyncSession, payload: QuotationCreate, user) -> 
         for p in [products[i.product_id]]
     ]
 
-    await recalculate_totals(q)
+    # ERP-015 FIXED: recalculate_totals is now a plain `def`, no await needed.
+    recalculate_totals(q)
     await db.flush()
 
     q.quotation_number = f"QT-{q.id:06d}"
     result = _map_quotation(q)
 
-    await db.commit()
-
+    # ERP-014 FIXED: emit_activity BEFORE commit.
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -254,6 +259,7 @@ async def create_quotation(db: AsyncSession, payload: QuotationCreate, user) -> 
         target_name=q.quotation_number,
     )
 
+    await db.commit()
     return result
 
 
@@ -415,12 +421,13 @@ async def update_quotation(
     q.updated_by_id = user.id
     q.updated_at = datetime.now(timezone.utc)
 
-    await recalculate_totals(q)
+    # ERP-015 FIXED: no await needed
+    recalculate_totals(q)
     await db.flush()
 
     result = _map_quotation(q)
-    await db.commit()
 
+    # ERP-014 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -432,14 +439,15 @@ async def update_quotation(
         changes=", ".join(changes),
     )
 
+    await db.commit()
     return result
 
 
 # =====================================================
-# APPROVE
+# SEND
 # =====================================================
 
-async def approve_quotation(
+async def send_quotation(
     db: AsyncSession,
     quotation_id: int,
     version: int,
@@ -451,6 +459,118 @@ async def approve_quotation(
             Quotation.id == quotation_id,
             Quotation.version == version,
             Quotation.status == QuotationStatus.draft,
+            Quotation.is_deleted.is_(False),
+        )
+        .values(
+            status=QuotationStatus.sent,
+            version=Quotation.version + 1,
+            updated_by_id=user.id,
+        )
+        .returning(Quotation.id)
+    )
+
+    sent_id = result.scalar_one_or_none()
+    if not sent_id:
+        raise AppException(
+            409,
+            "Quotation cannot be sent (not in draft state or version conflict)",
+            ErrorCode.QUOTATION_INVALID_STATE,
+        )
+
+    q = await _get_quotation_with_items(db, sent_id)
+
+    # ERP-014 FIXED: activity before commit
+    await emit_activity(
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.SEND_QUOTATION,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=q.quotation_number,
+    )
+
+    await db.commit()
+    return _map_quotation(q)
+
+
+# =====================================================
+# CANCEL
+# =====================================================
+
+async def cancel_quotation(
+    db: AsyncSession,
+    quotation_id: int,
+    version: int,
+    user,
+) -> QuotationOut:
+    CANCELLABLE_STATUSES = {
+        QuotationStatus.draft,
+        QuotationStatus.sent,
+        QuotationStatus.approved,
+    }
+
+    result = await db.execute(
+        update(Quotation)
+        .where(
+            Quotation.id == quotation_id,
+            Quotation.version == version,
+            Quotation.status.in_(CANCELLABLE_STATUSES),
+            Quotation.is_deleted.is_(False),
+        )
+        .values(
+            status=QuotationStatus.cancelled,
+            version=Quotation.version + 1,
+            updated_by_id=user.id,
+        )
+        .returning(Quotation.id)
+    )
+
+    cancelled_id = result.scalar_one_or_none()
+    if not cancelled_id:
+        raise AppException(
+            409,
+            "Quotation cannot be cancelled (invalid state or version conflict)",
+            ErrorCode.QUOTATION_INVALID_STATE,
+        )
+
+    q = await _get_quotation_with_items(db, cancelled_id)
+
+    # ERP-014 FIXED: activity before commit
+    await emit_activity(
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.CANCEL_QUOTATION,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=q.quotation_number,
+    )
+
+    await db.commit()
+    return _map_quotation(q)
+
+
+# =====================================================
+# APPROVE
+# ERP-028 FIXED: Approval now allowed from both `draft` AND `sent` states.
+# =====================================================
+
+async def approve_quotation(
+    db: AsyncSession,
+    quotation_id: int,
+    version: int,
+    user,
+) -> QuotationOut:
+    # ERP-028: Approve from draft OR sent (natural workflow: draft → sent → approved)
+    APPROVABLE_STATUSES = {QuotationStatus.draft, QuotationStatus.sent}
+
+    result = await db.execute(
+        update(Quotation)
+        .where(
+            Quotation.id == quotation_id,
+            Quotation.version == version,
+            Quotation.status.in_(APPROVABLE_STATUSES),
             Quotation.is_deleted.is_(False),
         )
         .values(
@@ -467,6 +587,7 @@ async def approve_quotation(
 
     q = await _get_quotation_with_items(db, approved_id)
 
+    # ERP-014 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -504,8 +625,8 @@ async def delete_quotation(
     q.updated_by_id = user.id
 
     result = _map_quotation(q)
-    await db.commit()
 
+    # ERP-014 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,
@@ -516,11 +637,15 @@ async def delete_quotation(
         target_name=q.quotation_number,
     )
 
+    await db.commit()
     return result
 
 
 # =====================================================
 # CONVERT TO INVOICE
+# ERP-044 NOTE: This marks the quotation as `converted_to_invoice`.
+# The caller (router) is responsible for separately calling create_invoice().
+# This is documented here explicitly so the two-step flow is clear.
 # =====================================================
 
 async def convert_quotation_to_invoice(
@@ -541,6 +666,7 @@ async def convert_quotation_to_invoice(
     q.version += 1
     q.updated_by_id = user.id
 
+    # ERP-014 FIXED: activity before commit
     await emit_activity(
         db=db,
         user_id=user.id,

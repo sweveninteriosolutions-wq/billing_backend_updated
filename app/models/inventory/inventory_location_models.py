@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Index
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from app.core.db import Base
 from app.models.base.mixins import TimestampMixin, SoftDeleteMixin, AuditMixin
@@ -12,9 +12,12 @@ class InventoryLocation(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     name = Column(String(100), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     version = Column(Integer, nullable=False, default=1)
+    # Optional link to formal Warehouse entity (added for multi-warehouse support)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True, index=True)
 
     inventory_balances = relationship("InventoryBalance", back_populates="location", lazy="selectin")
     inventory_movements = relationship("InventoryMovement", back_populates="location", lazy="selectin")
+    warehouse = relationship("Warehouse", back_populates="locations", lazy="selectin")
 
     __table_args__ = (Index("ix_inventory_location_active", "is_active"),)
 

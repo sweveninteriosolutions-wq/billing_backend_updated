@@ -12,8 +12,9 @@ class LoyaltyToken(Base, TimestampMixin, AuditMixin):
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
     tokens = Column(Integer, nullable=False)
 
-    customer = relationship("Customer", back_populates="loyalty_tokens", lazy="selectin")
-    invoice = relationship("Invoice", back_populates="loyalty_tokens", lazy="selectin")
+    # Use noload to avoid triggering lazy="raise" on Customer; explicitly loaded where needed
+    customer = relationship("Customer", back_populates="loyalty_tokens", lazy="noload")
+    invoice = relationship("Invoice", back_populates="loyalty_tokens", lazy="noload")
 
     __table_args__ = (
         CheckConstraint("tokens > 0", name="ck_loyalty_tokens_positive"),

@@ -1,3 +1,4 @@
+aiofiles==23.2.1
 aiosqlite==0.21.0
 alembic==1.17.0
 annotated-types==0.7.0
@@ -48,14 +49,14 @@ pluggy==1.6.0
 postgrest==2.22.0
 pragma==0.2.5
 propcache==0.4.1
-psycopg2-binary==2.9.11
 pyasn1==0.6.1
 PyContracts==1.8.12
 pycparser==2.23
 pydantic==2.5.1
+pydantic[email]
 pydantic_core==2.14.3
 Pygments==2.19.2
-PyJWT==2.10.1
+# ERP-058 FIXED: Removed PyJWT==2.10.1 — duplicate JWT library. Only python-jose is used.
 pyparsing==3.2.5
 pyreadline3==3.5.4
 pytest==8.3.2
@@ -91,5 +92,6 @@ watchfiles==1.1.0
 websockets==15.0.1
 win32_setctime==1.2.0
 yarl==1.22.0
-gunicorn 
-pydantic[email]
+# ERP-057 FIXED: Pinned gunicorn to a specific version to prevent silent breaking upgrades.
+gunicorn==21.2.0
+# ERP-059 FIXED: Removed psycopg2-binary — sync driver, never used; project uses asyncpg.

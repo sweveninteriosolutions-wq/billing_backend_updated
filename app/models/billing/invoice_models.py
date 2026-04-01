@@ -35,6 +35,8 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     item_signature = Column(String(128), nullable=False, index=True)
 
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")
+    # lazy="raise" on Customer.invoices means we must use selectinload() explicitly when needed
+    # From Invoice side, selectin is fine — the problem only occurs from the Customer side
     customer = relationship("Customer", back_populates="invoices", lazy="selectin")
     quotation = relationship("Quotation", lazy="selectin")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")

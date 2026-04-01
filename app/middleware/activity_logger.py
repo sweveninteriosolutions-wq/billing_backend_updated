@@ -1,8 +1,14 @@
+# app/middleware/activity_logger.py
+# ERP-025 FIXED: Registered in main.py (see main.py changes).
+# ERP-050 FIXED: Logger imported at module level, not inside except block.
+
+import logging
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import AsyncSessionLocal
 from app.utils.activity_helpers import log_user_activity
+
+logger = logging.getLogger(__name__)
 
 
 class ActivityLoggerMiddleware(BaseHTTPMiddleware):
@@ -10,7 +16,7 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Only log mutating requests
-        if request.method not in {"POST", "PUT", "DELETE"}:
+        if request.method not in {"POST", "PUT", "DELETE", "PATCH"}:
             return response
 
         user = getattr(request.state, "user", None)
@@ -33,11 +39,12 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
                     username=user.username,
                     message=message,
                 )
-            except Exception as e:
-                            # NEVER break request flow, but log the error for debugging.
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Failed to log user activity: {e}", exc_info=True)
-                pass
+            except Exception:
+                # NEVER break request flow, but log the error for debugging.
+                logger.error(
+                    "ActivityLoggerMiddleware: failed to log user activity",
+                    extra={"user_id": user.id, "path": request.url.path},
+                    exc_info=True,
+                )
 
         return response

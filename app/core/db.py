@@ -16,12 +16,23 @@ from app.core.config import (
     DB_SSL_VERIFY,
     DB_ECHO_POOL,
     APP_ENV,
+    IS_PRODUCTION,
 )
 
 # =====================================================
 # BASE
 # =====================================================
 Base = declarative_base()
+
+# =====================================================
+# ERP-026: Enforce SSL in production
+# =====================================================
+if IS_PRODUCTION and not DB_SSL_VERIFY:
+    raise ValueError(
+        "SECURITY ERROR (ERP-026): DB_SSL_VERIFY=false is not permitted in production. "
+        "Set DB_SSL_VERIFY=true and configure your Supabase CA certificate. "
+        "Disabling SSL verification in production exposes the DB connection to MITM attacks."
+    )
 
 # =====================================================
 # CONNECTION CONFIG
@@ -32,14 +43,14 @@ pool_args = {}
 if DB_TYPE == "postgres":
     ssl_ctx = ssl.create_default_context()
 
-    # 🔥 Required for Supabase local dev
     if not DB_SSL_VERIFY:
+        # Development only — never production (guarded above)
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
     connect_args = {
         "ssl": ssl_ctx,
-        # Disable prepared statements (asyncpg + Supabase stability)
+        # Disable prepared statements for Supabase/pgBouncer compatibility
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
         "server_settings": {"prepareThreshold": "0"},
@@ -96,7 +107,7 @@ if DB_TYPE == "sqlite":
         cursor.close()
 
 # =====================================================
-# MODEL IMPORT
+# MODEL IMPORT (registers all models with Base.metadata)
 # =====================================================
 import app.models  # noqa
 

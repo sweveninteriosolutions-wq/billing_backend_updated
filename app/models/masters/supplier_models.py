@@ -19,6 +19,7 @@ class Supplier(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
 
     grns = relationship("GRN", back_populates="supplier", lazy="selectin")
     products = relationship("Product", back_populates="supplier", lazy="selectin")
+    purchase_orders = relationship("PurchaseOrder", back_populates="supplier", lazy="selectin")
 
     def __repr__(self):
         return f"<Supplier id={self.id} code={self.supplier_code} name={self.name}>"

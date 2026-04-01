@@ -27,6 +27,9 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.DEACTIVATE_USER:
         "{actor_role} ({actor_email}) deactivated user {target_email}",
 
+    ActivityCode.ACTIVATE_USER:
+        "{actor_role} ({actor_email}) activated user {target_email}",
+
     ActivityCode.REACTIVATE_USER:
         "{actor_role} ({actor_email}) reactivated user {target_email}",
 
@@ -116,6 +119,9 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.DELETE_QUOTATION:
     "{actor_role} ({actor_email}) deleted quotation {target_name}",
 
+    ActivityCode.SEND_QUOTATION:
+    "{actor_role} ({actor_email}) sent quotation {target_name} to customer",
+
     ActivityCode.CANCEL_QUOTATION:
     "{actor_role} ({actor_email}) cancelled quotation {target_name}",
 
@@ -141,6 +147,9 @@ ACTIVITY_TEMPLATES = {
 
     ActivityCode.ADD_PAYMENT:
         "Invoice {target_name} received payment of ₹{amount}",
+
+    ActivityCode.PARTIAL_PAYMENT:
+        "Invoice {target_name} received partial payment of ₹{amount} (balance: ₹{balance})",
 
     ActivityCode.MARK_PAID:
         "Invoice {target_name} marked as fully paid",

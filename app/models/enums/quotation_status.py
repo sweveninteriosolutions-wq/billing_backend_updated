@@ -3,6 +3,7 @@ import enum
 
 class QuotationStatus(str, enum.Enum):
     draft = "draft"
+    sent = "sent"       # Quotation shared with customer, awaiting response
     approved = "approved"
     expired = "expired"
     converted_to_invoice = "converted_to_invoice"

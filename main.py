@@ -18,6 +18,7 @@ from app.routers import (
     product_router,
     inventory_balance_router,
     inventory_location_router,
+    inventory_movement_router,
     grn_router,
     quotation_router,
     invoice_router,
@@ -26,6 +27,10 @@ from app.routers import (
     loyalty_token_router,
     stock_transfer_router,
     complaint_router,
+    file_upload_router,
+    purchase_order_router,
+    warehouse_router,
+    reports_router,
 )
 
 from app.core.db import init_models
@@ -33,6 +38,9 @@ from app.core.scheduler import scheduler
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.middleware.request_logging import request_logging_middleware
+from app.middleware.rate_limiter import RateLimitMiddleware
+# ERP-025 FIXED: ActivityLoggerMiddleware was defined but never registered. Now imported and added.
+from app.middleware.activity_logger import ActivityLoggerMiddleware
 from app.core.error_handlers import (
     app_exception_handler,
     validation_exception_handler,
@@ -67,7 +75,7 @@ async def lifespan(app: FastAPI):
         await init_models()
         logger.info("📦 Database models initialized (development)")
     else:
-        logger.info("📦 Production mode: init_models() skipped")
+        logger.info("📦 Production mode: init_models() skipped — use Alembic migrations")
 
     # ⚠️ Scheduler control
     if ENV == "production":
@@ -108,12 +116,15 @@ app.add_exception_handler(IntegrityError, integrity_error_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # ------------------------------------------------------------------------------
-# MIDDLEWARE
+# MIDDLEWARE (order matters — outermost = first to run)
+# 1. Rate limiter (blocks first, before any work)
+# 2. CORS (handles preflight)
+# 3. Activity logger (logs mutating requests with user context)
+# 4. Request logging (innermost — records timing)
 # ------------------------------------------------------------------------------
-app.middleware("http")(request_logging_middleware)
+app.add_middleware(RateLimitMiddleware)
 
 origins = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -122,6 +133,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ERP-025 FIXED: Middleware is now registered. Runs after auth sets request.state.user.
+app.add_middleware(ActivityLoggerMiddleware)
+
+app.middleware("http")(request_logging_middleware)
 
 # ------------------------------------------------------------------------------
 # HEALTH CHECK
@@ -147,6 +162,7 @@ app.include_router(product_router)
 app.include_router(discount_router)
 app.include_router(inventory_balance_router)
 app.include_router(inventory_location_router)
+app.include_router(inventory_movement_router)
 app.include_router(grn_router)
 app.include_router(quotation_router)
 app.include_router(invoice_router)
@@ -154,3 +170,7 @@ app.include_router(payment_router)
 app.include_router(loyalty_token_router)
 app.include_router(stock_transfer_router)
 app.include_router(complaint_router)
+app.include_router(file_upload_router)
+app.include_router(purchase_order_router)
+app.include_router(warehouse_router)
+app.include_router(reports_router)

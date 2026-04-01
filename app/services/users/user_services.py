@@ -20,7 +20,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_ROLES = {"admin", "cashier", "sales", "inventory"}
+ALLOWED_ROLES = {"admin", "cashier", "sales", "inventory", "manager"}
 
 
 # =========================
@@ -65,9 +65,6 @@ async def create_user(db: AsyncSession, payload: UserCreateSchema, admin: User):
 # =========================
 # LIST USERS
 # =========================
-from datetime import date
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
 
 async def list_users(
     db: AsyncSession,
@@ -75,9 +72,6 @@ async def list_users(
 ) -> dict:
     base_stmt = select(User)
 
-    # --------------------
-    # Filters
-    # --------------------
     if filters.search:
         base_stmt = base_stmt.where(
             User.username.ilike(f"%{filters.search}%")
@@ -102,16 +96,10 @@ async def list_users(
             User.created_by_admin_id == filters.created_by
         )
 
-    # --------------------
-    # Total count (before pagination)
-    # --------------------
     total = await db.scalar(
         select(func.count()).select_from(base_stmt.subquery())
     )
 
-    # --------------------
-    # Sorting (safe)
-    # --------------------
     sort_map = {
         "created_at": User.created_at,
         "username": User.username,
@@ -127,9 +115,6 @@ async def list_users(
         else sort_col.asc()
     )
 
-    # --------------------
-    # Pagination
-    # --------------------
     page = max(filters.page, 1)
     page_size = filters.page_size
     offset = (page - 1) * page_size
@@ -144,9 +129,6 @@ async def list_users(
     result = await db.execute(stmt)
     users = result.scalars().all()
 
-    # --------------------
-    # Response (MATCHES SCHEMA)
-    # --------------------
     return {
         "items": [
             UserListItemSchema(
@@ -185,25 +167,16 @@ async def update_user(
     payload: UserUpdateSchema,
     admin: User,
 ):
-    # -------------------------------------------------
-    # FETCH USER
-    # -------------------------------------------------
     user = await db.get(User, user_id)
     if not user:
         raise AppException(404, "User not found", ErrorCode.USER_NOT_FOUND)
 
-    # -------------------------------------------------
-    # CAPTURE PREVIOUS STATE (FOR AUDIT)
-    # -------------------------------------------------
     prev_email = user.username
     prev_role = user.role
     prev_is_active = user.is_active
 
     values: dict = {}
 
-    # -------------------------------------------------
-    # EMAIL UPDATE
-    # -------------------------------------------------
     if payload.email and payload.email != user.username:
         exists = await db.scalar(
             select(User.id).where(
@@ -212,51 +185,23 @@ async def update_user(
             )
         )
         if exists:
-            raise AppException(
-                400,
-                "Email already in use",
-                ErrorCode.USER_EMAIL_ALREADY_EXISTS,
-            )
-
+            raise AppException(400, "Email already in use", ErrorCode.USER_EMAIL_EXISTS)
         values["username"] = payload.email
 
-    # -------------------------------------------------
-    # PASSWORD UPDATE
-    # -------------------------------------------------
     if payload.password:
         values["password_hash"] = hash_password(payload.password)
 
-    # -------------------------------------------------
-    # ROLE UPDATE
-    # -------------------------------------------------
     if payload.role and payload.role != user.role:
         if payload.role not in ALLOWED_ROLES:
-            raise AppException(
-                400,
-                "Invalid role",
-                ErrorCode.USER_ROLE_INVALID,
-            )
+            raise AppException(400, "Invalid role", ErrorCode.USER_ROLE_INVALID)
         values["role"] = payload.role
 
-    # -------------------------------------------------
-    # ACTIVE STATUS UPDATE
-    # -------------------------------------------------
     if payload.is_active is not None and payload.is_active != user.is_active:
         values["is_active"] = payload.is_active
 
-    # -------------------------------------------------
-    # NO-OP GUARD
-    # -------------------------------------------------
     if not values:
-        raise AppException(
-            400,
-            "No changes provided",
-            ErrorCode.VALIDATION_ERROR,
-        )
+        raise AppException(400, "No changes provided", ErrorCode.VALIDATION_ERROR)
 
-    # -------------------------------------------------
-    # OPTIMISTIC UPDATE
-    # -------------------------------------------------
     stmt = (
         update(User)
         .where(
@@ -274,49 +219,30 @@ async def update_user(
     updated_user = result.scalar_one_or_none()
 
     if not updated_user:
-        raise AppException(
-            409,
-            "User was modified by another process",
-            ErrorCode.USER_VERSION_CONFLICT,
-        )
+        raise AppException(409, "User was modified by another process", ErrorCode.USER_VERSION_CONFLICT)
 
-    # -------------------------------------------------
-    # ACTIVITY LOGGING (BEFORE COMMIT)
-    # -------------------------------------------------
     if "username" in values:
         await emit_activity(
-            db=db,
-            user_id=admin.id,
-            username=admin.username,
-            actor_role=admin.role.capitalize(),
-            actor_email=admin.username,
+            db=db, user_id=admin.id, username=admin.username,
+            actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_EMAIL,
-            target_email=prev_email,
-            new_email=updated_user.username,
+            target_email=prev_email, new_email=updated_user.username,
         )
 
     if "password_hash" in values:
         await emit_activity(
-            db=db,
-            user_id=admin.id,
-            username=admin.username,
-            actor_role=admin.role.capitalize(),
-            actor_email=admin.username,
+            db=db, user_id=admin.id, username=admin.username,
+            actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_PASSWORD,
             target_email=updated_user.username,
         )
 
     if "role" in values:
         await emit_activity(
-            db=db,
-            user_id=admin.id,
-            username=admin.username,
-            actor_role=admin.role.capitalize(),
-            actor_email=admin.username,
+            db=db, user_id=admin.id, username=admin.username,
+            actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_ROLE,
-            target_email=updated_user.username,
-            old_role=prev_role,
-            new_role=updated_user.role,
+            target_email=updated_user.username, old_role=prev_role, new_role=updated_user.role,
         )
 
     if "is_active" in values:
@@ -326,20 +252,14 @@ async def update_user(
             else ActivityCode.REACTIVATE_USER
         )
         await emit_activity(
-            db=db,
-            user_id=admin.id,
-            username=admin.username,
-            actor_role=admin.role.capitalize(),
-            actor_email=admin.username,
-            code=activity_code,
-            target_email=updated_user.username,
+            db=db, user_id=admin.id, username=admin.username,
+            actor_role=admin.role.capitalize(), actor_email=admin.username,
+            code=activity_code, target_email=updated_user.username,
         )
 
-    # -------------------------------------------------
-    # COMMIT & RETURN
-    # -------------------------------------------------
     await db.commit()
     return UserDetailSchema.from_orm(updated_user)
+
 
 # =========================
 # DEACTIVATE USER
@@ -352,11 +272,7 @@ async def deactivate_user(
 ):
     logger.info(
         "Deactivating user",
-        extra={
-            "target_user_id": user_id,
-            "requested_version": version,
-            "actor_id": admin.id,
-        },
+        extra={"target_user_id": user_id, "requested_version": version, "actor_id": admin.id},
     )
 
     stmt = (
@@ -374,15 +290,9 @@ async def deactivate_user(
     user = result.scalar_one_or_none()
 
     if not user:
-        logger.warning(
-            "User already inactive or version conflict",
-            extra={"target_user_id": user_id},
-        )
-        raise AppException(
-            409,
-            "User already inactive",
-            ErrorCode.CONFLICT,
-        )
+        logger.warning("User already inactive or version conflict", extra={"target_user_id": user_id})
+        # ERP-024 FIXED: Use specific error code USER_INACTIVE instead of generic CONFLICT.
+        raise AppException(409, "User is already inactive", ErrorCode.USER_INACTIVE)
 
     await emit_activity(
         db,
@@ -396,14 +306,7 @@ async def deactivate_user(
 
     await db.commit()
 
-    logger.info(
-        "User deactivated successfully",
-        extra={
-            "target_user_id": user.id,
-            "new_version": user.version,
-        },
-    )
-
+    logger.info("User deactivated successfully", extra={"target_user_id": user.id, "new_version": user.version})
     return UserDetailSchema.from_orm(user)
 
 
@@ -418,11 +321,7 @@ async def reactivate_user(
 ):
     logger.info(
         "Reactivating user",
-        extra={
-            "target_user_id": user_id,
-            "requested_version": version,
-            "actor_id": admin.id,
-        },
+        extra={"target_user_id": user_id, "requested_version": version, "actor_id": admin.id},
     )
 
     stmt = (
@@ -440,15 +339,9 @@ async def reactivate_user(
     user = result.scalar_one_or_none()
 
     if not user:
-        logger.warning(
-            "User already active or version conflict",
-            extra={"target_user_id": user_id},
-        )
-        raise AppException(
-            409,
-            "User already active",
-            ErrorCode.CONFLICT,
-        )
+        logger.warning("User already active or version conflict", extra={"target_user_id": user_id})
+        # ERP-024 FIXED: Use specific error code USER_ALREADY_ACTIVE instead of generic CONFLICT.
+        raise AppException(409, "User is already active", ErrorCode.USER_ALREADY_ACTIVE)
 
     await emit_activity(
         db,
@@ -462,34 +355,20 @@ async def reactivate_user(
 
     await db.commit()
 
-    logger.info(
-        "User reactivated successfully",
-        extra={
-            "target_user_id": user.id,
-            "new_version": user.version,
-        },
-    )
-
+    logger.info("User reactivated successfully", extra={"target_user_id": user.id, "new_version": user.version})
     return UserDetailSchema.from_orm(user)
 
 
 # =========================
 # DASHBOARD
 # =========================
-
 async def get_user_dashboard_stats(db: AsyncSession):
     result = await db.execute(
         select(
             func.count(User.id).label("total_users"),
-            func.count(User.id)
-            .filter(User.is_active.is_(True))
-            .label("active_users"),
-            func.count(User.id)
-            .filter(User.role == "admin")
-            .label("admin_users"),
-            func.count(User.id)
-            .filter(User.is_online.is_(True))
-            .label("online_users"),
+            func.count(User.id).filter(User.is_active.is_(True)).label("active_users"),
+            func.count(User.id).filter(User.role == "admin").label("admin_users"),
+            func.count(User.id).filter(User.is_online.is_(True)).label("online_users"),
         )
     )
 

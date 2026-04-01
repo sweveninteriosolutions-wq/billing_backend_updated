@@ -1,5 +1,6 @@
-# Python
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -7,29 +8,54 @@ __pycache__/
 *.pyo.*
 *.egg-info/
 *.egg
+*.so
+dist/
+build/
 
-# Virtual environment
-.env
+# ─── Virtual environments ─────────────────────────────────────────────────────
 .venv
 venv/
+env/
 sweven/
 
-alembic/
-alembic.ini
+# ─── Environment / Secrets — NEVER COMMIT THESE ──────────────────────────────
+# ERP-001 / ERP-054: .env must never be committed.
+# If you accidentally committed it, run:
+#   git rm --cached .env
+#   git filter-repo --path .env --invert-paths   (or git filter-branch)
+#   Immediately rotate all secrets in the committed file.
+.env
+.env.*
+!.env.example
 
-# VSCode
+# ─── Alembic (generated migration files stay, ini stays tracked) ──────────────
+# alembic/versions/ — keep tracked
+# alembic.ini — keep tracked
+
+# ─── IDE / Editor ────────────────────────────────────────────────────────────
 .vscode/
+.idea/
+*.swp
+*.swo
 
-# MacOS
+# ─── OS ──────────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 
-# Logs
+# ─── Logs ────────────────────────────────────────────────────────────────────
 *.log
+logs/
 
-# Uvicorn / FastAPI
+# ─── Databases ───────────────────────────────────────────────────────────────
 *.db
+*.sqlite
+*.sqlite3
 
-# Pytest / coverage
+# ─── Uploads / generated files ───────────────────────────────────────────────
+uploads/
+generated_pdfs/
+
+# ─── Test / Coverage ─────────────────────────────────────────────────────────
 .pytest_cache/
 .hypothesis/
 .coverage
@@ -41,6 +67,8 @@ coverage.xml
 *.py,cover
 htmlcov/
 
+# ─── Misc ────────────────────────────────────────────────────────────────────
 temp/
-
 flow.md
+*.bak
+*.tmp

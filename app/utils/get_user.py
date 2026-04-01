@@ -22,7 +22,16 @@ async def get_current_user(
             detail="Invalid authorization header",
         )
 
-    token = authorization.split("Bearer ")[1].strip()
+    # ERP-027 FIXED: Use removeprefix() instead of split()[1] — safe against
+    # tokens that may contain the substring "Bearer ".
+    token = authorization.removeprefix("Bearer ").strip()
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header",
+        )
+
     payload = decode_access_token(token)
 
     username = payload.get("sub")

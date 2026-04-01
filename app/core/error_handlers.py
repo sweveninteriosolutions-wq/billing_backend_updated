@@ -53,6 +53,7 @@ HTTP_STATUS_TO_ERROR_CODE = {
     404: ErrorCode.NOT_FOUND,
     409: ErrorCode.CONFLICT,
     422: ErrorCode.VALIDATION_ERROR,
+    429: ErrorCode.RATE_LIMIT_EXCEEDED,
 }
 
 
