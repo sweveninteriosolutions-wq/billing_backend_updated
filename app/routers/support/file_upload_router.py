@@ -1,5 +1,9 @@
 # app/routers/support/file_upload_router.py
+# SEC-P1-5  FIXED: Added path-traversal guard on download + entity-role access check.
+# SEC-P1-10 FIXED: Sanitize original_filename before storing (strip path components,
+#                  replace non-printable/dangerous characters).
 import os
+import re
 import uuid
 import logging
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
@@ -9,15 +13,41 @@ from sqlalchemy import select
 
 from app.core.db import get_db
 from app.utils.check_roles import require_role
+from app.utils.get_user import get_current_user
 from app.utils.response import success_response, APIResponse
 from app.models.support.file_upload_models import FileUpload
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_ROOT = os.getenv("UPLOAD_ROOT", "uploads")
+UPLOAD_ROOT = os.path.realpath(os.getenv("UPLOAD_ROOT", "uploads"))
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def _sanitize_filename(filename: str) -> str:
+    """
+    SEC-P1-10: Sanitize uploaded filename before storing in DB.
+    - Strip any directory path component (prevents path traversal in stored name).
+    - Replace characters outside the safe set with underscores.
+    - Cap length at 255 characters.
+    """
+    name = os.path.basename(filename)                   # strip directory parts
+    name = re.sub(r"[^\w\-_\. ]", "_", name)           # keep only safe chars
+    name = name.strip(". ")                             # strip leading/trailing dots and spaces
+    return name[:255] if name else "upload"
+
+
+def _safe_download_path(storage_path: str) -> str:
+    """
+    SEC-P1-5: Resolve the full path and verify it stays within UPLOAD_ROOT.
+    Prevents path traversal attacks where storage_path in the DB has been
+    tampered with (e.g. '../../etc/passwd').
+    """
+    full_path = os.path.realpath(os.path.join(UPLOAD_ROOT, storage_path))
+    if not full_path.startswith(UPLOAD_ROOT + os.sep) and full_path != UPLOAD_ROOT:
+        raise HTTPException(status_code=403, detail="Invalid file path")
+    return full_path
 
 router = APIRouter(prefix="/files", tags=["File Uploads"])
 
@@ -79,10 +109,13 @@ async def upload_file(
         logger.error(f"File save error: {e}")
         raise HTTPException(500, detail="Failed to save file.")
 
+    # SEC-P1-10: Store sanitized filename, not the raw client-supplied name.
+    safe_original = _sanitize_filename(file.filename or "upload")
+
     record = FileUpload(
         entity_type=entity_type,
         entity_id=entity_id,
-        original_filename=file.filename or "upload",
+        original_filename=safe_original,
         storage_path=rel_path,
         mime_type=content_type,
         file_size_bytes=file_size,
@@ -135,13 +168,29 @@ async def list_files_for_entity(
 async def download_file(
     file_id: int,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_role(["admin", "inventory", "cashier", "manager"])),
+    user=Depends(get_current_user),
 ):
     record = await db.get(FileUpload, file_id)
     if not record:
         raise HTTPException(404, detail="File not found")
 
-    full_path = os.path.join(UPLOAD_ROOT, record.storage_path)
+    # SEC-P1-5 FIXED: Entity-level role access check.
+    # Admin and manager can download any file.
+    # Other roles are restricted to file types relevant to their domain.
+    role = user.role.lower()
+    if role not in ("admin", "manager"):
+        entity_role_map = {
+            "grn": {"inventory"},
+            "supplier_bill": {"inventory"},
+            "invoice": {"cashier"},
+        }
+        allowed_roles = entity_role_map.get(record.entity_type, set())
+        if role not in allowed_roles:
+            raise HTTPException(403, detail="Permission denied for this file type")
+
+    # SEC-P1-5 FIXED: Path-traversal guard — verify resolved path stays inside UPLOAD_ROOT.
+    full_path = _safe_download_path(record.storage_path)
+
     if not os.path.exists(full_path):
         raise HTTPException(404, detail="File not found on disk")
 

@@ -15,6 +15,7 @@ from app.schemas.billing.invoice_schemas import (
     InvoiceDiscountApply,
     InvoicePaymentCreate,
     InvoiceAdminDiscountOverride,
+    InvoiceFulfillRequest,
     PaymentOut,
 )
 
@@ -151,10 +152,12 @@ async def add_payment_api(
 )
 async def fulfill_invoice_api(
     invoice_id: int,
+    payload: InvoiceFulfillRequest,
     db: AsyncSession = Depends(get_db),
     user=Depends(require_role(["admin"])),
 ):
-    invoice = await fulfill_invoice(db, invoice_id, user)
+    # LOCK-P1-8: Pass version from request for optimistic lock check in service.
+    invoice = await fulfill_invoice(db, invoice_id, user, payload.version)
     return success_response("Invoice fulfilled successfully", invoice)
 
 

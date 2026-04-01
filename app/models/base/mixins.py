@@ -11,26 +11,42 @@ class SoftDeleteMixin:
     is_deleted = Column(Boolean, default=False, nullable=False)
 
 class AuditMixin:
+    # PERF-P1-4 FIXED: Changed lazy="selectin" to lazy="raise" on audit relationships.
+    #
+    # PROBLEM: lazy="selectin" fired 2 extra SELECT queries per model instance on EVERY
+    # fetch — one for created_by, one for updated_by. On a list of 20 invoices this meant
+    # 40 additional DB round trips, even when audit user info wasn't needed.
+    #
+    # FIX: lazy="raise" causes SQLAlchemy to raise an error if the relationship is accessed
+    # without being explicitly loaded. This forces service-layer code to be intentional:
+    #   - Use selectinload(Model.created_by) / selectinload(Model.updated_by) when needed.
+    #   - Use noload(Model.created_by) / noload(Model.updated_by) when not needed.
+    #
+    # MIGRATION NOTE: Any service that accesses .created_by or .updated_by directly
+    # (e.g. in response serialization) will raise a greenlet_spawn error until you add
+    # explicit selectinload() to that query. Search for created_by_username / updated_by_username
+    # in schemas and add the load options accordingly.
+
     @declared_attr
-    def created_by_id(cls): 
+    def created_by_id(cls):
         return Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     @declared_attr
-    def updated_by_id(cls): 
+    def updated_by_id(cls):
         return Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     @declared_attr
-    def created_by(cls): 
-        return relationship("User", foreign_keys=[cls.created_by_id], lazy="selectin")
+    def created_by(cls):
+        return relationship("User", foreign_keys=[cls.created_by_id], lazy="raise")
 
     @declared_attr
-    def updated_by(cls): 
-        return relationship("User", foreign_keys=[cls.updated_by_id], lazy="selectin")
+    def updated_by(cls):
+        return relationship("User", foreign_keys=[cls.updated_by_id], lazy="raise")
 
     @hybrid_property
-    def created_by_username(self): 
+    def created_by_username(self):
         return self.created_by.username if self.created_by else None
 
     @hybrid_property
-    def updated_by_username(self): 
+    def updated_by_username(self):
         return self.updated_by.username if self.updated_by else None

@@ -171,6 +171,13 @@ async def update_user(
     if not user:
         raise AppException(404, "User not found", ErrorCode.USER_NOT_FOUND)
 
+    # SEC-P1-2 FIXED: Prevent admin from downgrading or deactivating their own account.
+    if user_id == admin.id:
+        if payload.role and payload.role != admin.role:
+            raise AppException(400, "You cannot change your own role", ErrorCode.VALIDATION_ERROR)
+        if payload.is_active is False:
+            raise AppException(400, "You cannot deactivate your own account", ErrorCode.VALIDATION_ERROR)
+
     prev_email = user.username
     prev_role = user.role
     prev_is_active = user.is_active
@@ -270,6 +277,11 @@ async def deactivate_user(
     version: int,
     admin: User,
 ):
+    # SEC-P1-2 FIXED: Prevent admin from deactivating their own account.
+    # Without this guard, an admin could lock themselves out, requiring manual DB intervention.
+    if user_id == admin.id:
+        raise AppException(400, "You cannot deactivate your own account", ErrorCode.VALIDATION_ERROR)
+
     logger.info(
         "Deactivating user",
         extra={"target_user_id": user_id, "requested_version": version, "actor_id": admin.id},

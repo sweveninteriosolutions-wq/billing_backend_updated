@@ -10,7 +10,16 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     username = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role = Column(String(50), nullable=False, default="user")
+    # SEC-P2-6: role is validated at Python level (ALLOWED_ROLES in user_services.py)
+    # but NOT at the DB level. A DB admin inserting a row directly can bypass all checks.
+    # Add a DB-level constraint via migration:
+    #
+    #   ALTER TABLE users ADD CONSTRAINT ck_users_role
+    #   CHECK (role IN ('admin','cashier','sales','inventory','manager'));
+    #
+    # Future improvement: convert to SQLAlchemy Enum(UserRole) to get both DB-level
+    # enforcement and Python-level type safety.
+    role = Column(String(50), nullable=False, default="cashier")
     is_active = Column(Boolean, default=True, nullable=False)
     token_version = Column(Integer, nullable=False, default=0)
     last_login = Column(DateTime(timezone=True))

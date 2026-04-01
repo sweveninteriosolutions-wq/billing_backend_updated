@@ -34,6 +34,7 @@ def create_access_token(
     subject: str,
     token_version: int,
     expires_delta: Optional[timedelta] = None,
+    role: Optional[str] = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (
@@ -49,6 +50,13 @@ def create_access_token(
         "iat": now,
         "exp": expire,
     }
+
+    # PERF-P2-3 FIXED: Embed role in JWT payload.
+    # This allows future read-only endpoints to verify the role from the token
+    # without making a DB round trip. Write paths still hit DB (to verify
+    # token_version and get the full User object) — this is intentional.
+    if role is not None:
+        payload["role"] = role
 
     return jwt.encode(payload, JWT_ACCESS_SECRET_KEY, algorithm=JWT_ALGORITHM)
 

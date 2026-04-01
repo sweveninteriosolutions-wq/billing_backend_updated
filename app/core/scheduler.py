@@ -1,10 +1,21 @@
 # app/core/scheduler.py
 # ERP-008 FIXED: All scheduler jobs now wrapped in try/except with structured logging.
 # ERP-043 FIXED: Discount jobs run in isolated sessions so one failure doesn't corrupt the other.
+# SEC-P0-3 FIXED: Scheduler is designed to run in a DEDICATED process (app/core/run_scheduler.py),
+#   NOT inside every Gunicorn worker. In multi-worker deployments, starting the scheduler inside
+#   the API lifespan causes every worker to execute cron jobs independently, resulting in duplicate
+#   DB writes (double-expiry, double-activation). The main.py lifespan still starts the scheduler
+#   in development (single process), but production must use run_scheduler.py as a separate container.
+# SEC-P1-3 FIXED: Added purge_expired_refresh_tokens_job to prevent unbounded table growth.
 
 import logging
+from datetime import datetime, timedelta, timezone
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import delete, or_, and_
+
 from app.core.db import AsyncSessionLocal
+from app.models.users.user_models import RefreshToken
 
 from app.services.billing.quotation_expiry_service import auto_expire_quotations
 from app.services.masters.discount_expiry_n_activate_service import (
@@ -49,3 +60,35 @@ async def discount_activate_job():
             logger.info("discount_activate_job complete", extra={"activated": count})
     except Exception:
         logger.exception("discount_activate_job failed — will retry next scheduled run")
+
+
+@scheduler.scheduled_job("cron", hour=2, minute=0)  # daily at 02:00
+async def purge_expired_refresh_tokens_job():
+    """
+    SEC-P1-3 FIXED: Delete refresh tokens that are either:
+      - expired (expires_at older than RETENTION_DAYS ago), or
+      - revoked AND created more than RETENTION_DAYS ago.
+    Without this job, the refresh_tokens table grows unboundedly with every login.
+    """
+    RETENTION_DAYS = 30
+    cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                delete(RefreshToken).where(
+                    or_(
+                        RefreshToken.expires_at < cutoff,
+                        and_(
+                            RefreshToken.revoked.is_(True),
+                            RefreshToken.created_at < cutoff,
+                        ),
+                    )
+                )
+            )
+            await db.commit()
+            logger.info(
+                "purge_expired_refresh_tokens_job complete",
+                extra={"deleted": result.rowcount},
+            )
+    except Exception:
+        logger.exception("purge_expired_refresh_tokens_job failed — will retry next scheduled run")

@@ -8,12 +8,12 @@ import hashlib
 from app.core.config import DEFAULT_WAREHOUSE_LOCATION_ID, GST_RATE
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, delete
+from sqlalchemy import select, func, desc, delete, update as sa_update
 from sqlalchemy.orm import selectinload, noload
 
 from app.models.billing.invoice_models import Invoice, InvoiceItem
 from app.models.billing.payment_models import Payment
-from app.models.billing.loyaltyTokens_models import LoyaltyToken
+from app.models.billing.loyalty_token_models import LoyaltyToken
 from app.models.billing.quotation_models import Quotation
 from app.models.masters.customer_models import Customer
 
@@ -432,8 +432,18 @@ async def update_invoice(
     if invoice.version != payload.version:
         raise AppException(409, "Invoice modified by another process", ErrorCode.INVOICE_VERSION_CONFLICT)
 
+    # AUDIT-P1-7 FIXED: Soft-delete existing items instead of hard-deleting them.
+    # Hard-deleting invoice items destroys the audit trail — if an invoice is disputed
+    # after editing, there's no record of what items existed before the update.
+    # Soft-deleted items remain in DB with is_deleted=True and are excluded from
+    # business logic (already handled by _map_invoice which filters `if not i.is_deleted`).
     await db.execute(
-        delete(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
+        sa_update(InvoiceItem)
+        .where(
+            InvoiceItem.invoice_id == invoice.id,
+            InvoiceItem.is_deleted.is_(False),
+        )
+        .values(is_deleted=True, updated_by_id=user.id)
     )
 
     gross = Decimal("0.00")
@@ -660,7 +670,7 @@ async def add_payment(
 # FULFILL INVOICE
 # =====================================================
 
-async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut:
+async def fulfill_invoice(db: AsyncSession, invoice_id: int, user, version: int) -> InvoiceOut:
     result = await db.execute(
         select(Invoice)
         .options(
@@ -678,6 +688,16 @@ async def fulfill_invoice(db: AsyncSession, invoice_id: int, user) -> InvoiceOut
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise AppException(404, "Invoice not found", ErrorCode.INVOICE_NOT_FOUND)
+
+    # LOCK-P1-8 FIXED: Optimistic lock check on fulfill.
+    # Without this, two concurrent fulfill requests both pass the status check
+    # and both proceed to deduct inventory and grant loyalty tokens, causing double-spend.
+    if invoice.version != version:
+        raise AppException(
+            409,
+            "Invoice was modified by another process — please refresh and retry",
+            ErrorCode.INVOICE_VERSION_CONFLICT,
+        )
 
     if invoice.status != InvoiceStatus.paid:
         raise AppException(

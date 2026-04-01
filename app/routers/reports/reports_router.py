@@ -1,9 +1,15 @@
 # app/routers/reports/reports_router.py
 """
 Sales and inventory reports endpoints.
+
+PERF-P1-6 FIXED: Replaced func.date(Invoice.created_at) >= date_val with
+timezone-aware datetime range comparisons. Using func.date() wraps the column
+in a function call which prevents the query planner from using the btree index
+on created_at, causing full table scans. Range comparisons (col >= X AND col <= Y)
+are sargable and allow index usage.
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
@@ -24,6 +30,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
+def _date_range(from_date: date, to_date: date) -> tuple:
+    """
+    PERF-P1-6: Convert date objects to UTC datetime range boundaries.
+    Returns (start_dt, end_dt) as timezone-aware datetimes suitable for
+    index-friendly range comparisons on created_at columns.
+    """
+    start_dt = datetime.combine(from_date, time.min).replace(tzinfo=timezone.utc)
+    end_dt = datetime.combine(to_date, time.max).replace(tzinfo=timezone.utc)
+    return start_dt, end_dt
+
+
 @router.get("/sales/summary")
 async def sales_summary(
     db: AsyncSession = Depends(get_db),
@@ -31,6 +48,7 @@ async def sales_summary(
     from_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     to_date: date = Query(default_factory=lambda: date.today()),
 ):
+    start_dt, end_dt = _date_range(from_date, to_date)
     result = await db.execute(
         select(
             func.count(Invoice.id).label("invoice_count"),
@@ -43,8 +61,8 @@ async def sales_summary(
         .where(
             Invoice.is_deleted.is_(False),
             Invoice.status.notin_([InvoiceStatus.cancelled, InvoiceStatus.draft]),
-            func.date(Invoice.created_at) >= from_date,
-            func.date(Invoice.created_at) <= to_date,
+            Invoice.created_at >= start_dt,   # PERF-P1-6: index-friendly range
+            Invoice.created_at <= end_dt,
         )
     )
     row = result.first()
@@ -68,6 +86,8 @@ async def daily_sales(
     days: int = Query(30, ge=1, le=365),
 ):
     from_date = date.today() - timedelta(days=days - 1)
+    start_dt, _ = _date_range(from_date, date.today())
+    # func.date() in GROUP BY and ORDER BY is fine (not in WHERE) — no index impact there.
     result = await db.execute(
         select(
             func.date(Invoice.created_at).label("day"),
@@ -77,7 +97,7 @@ async def daily_sales(
         .where(
             Invoice.is_deleted.is_(False),
             Invoice.status.notin_([InvoiceStatus.cancelled, InvoiceStatus.draft]),
-            func.date(Invoice.created_at) >= from_date,
+            Invoice.created_at >= start_dt,   # PERF-P1-6: index-friendly
         )
         .group_by(func.date(Invoice.created_at))
         .order_by(func.date(Invoice.created_at))
@@ -97,6 +117,7 @@ async def top_products(
     from_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     to_date: date = Query(default_factory=lambda: date.today()),
 ):
+    start_dt, end_dt = _date_range(from_date, to_date)
     result = await db.execute(
         select(
             InvoiceItem.product_id,
@@ -110,8 +131,8 @@ async def top_products(
         .where(
             Invoice.is_deleted.is_(False),
             Invoice.status.notin_([InvoiceStatus.cancelled, InvoiceStatus.draft]),
-            func.date(Invoice.created_at) >= from_date,
-            func.date(Invoice.created_at) <= to_date,
+            Invoice.created_at >= start_dt,   # PERF-P1-6: index-friendly
+            Invoice.created_at <= end_dt,
         )
         .group_by(InvoiceItem.product_id, Product.name, Product.sku)
         .order_by(desc(func.sum(InvoiceItem.quantity)))
@@ -138,6 +159,7 @@ async def top_customers(
     from_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     to_date: date = Query(default_factory=lambda: date.today()),
 ):
+    start_dt, end_dt = _date_range(from_date, to_date)
     result = await db.execute(
         select(
             Invoice.customer_id,
@@ -149,8 +171,8 @@ async def top_customers(
         .where(
             Invoice.is_deleted.is_(False),
             Invoice.status.notin_([InvoiceStatus.cancelled, InvoiceStatus.draft]),
-            func.date(Invoice.created_at) >= from_date,
-            func.date(Invoice.created_at) <= to_date,
+            Invoice.created_at >= start_dt,   # PERF-P1-6: index-friendly
+            Invoice.created_at <= end_dt,
         )
         .group_by(Invoice.customer_id, Customer.name)
         .order_by(desc(func.sum(Invoice.net_amount)))

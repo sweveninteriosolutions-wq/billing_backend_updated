@@ -73,6 +73,14 @@ class InvoicePaymentCreate(BaseModel):
     payment_method: Optional[str] = None
 
 
+# LOCK-P1-8 FIXED: Added version field to FulfillRequest so fulfill_invoice
+# can perform an optimistic lock check. Without this, two concurrent requests
+# could both fulfill the same invoice, each triggering inventory deductions
+# and loyalty token grants for the same invoice — causing double-spend.
+class InvoiceFulfillRequest(BaseModel):
+    version: int
+
+
 # =====================================================
 # PAYMENT OUTPUT
 # =====================================================

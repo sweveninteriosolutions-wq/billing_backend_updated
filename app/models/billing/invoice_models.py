@@ -32,6 +32,17 @@ class Invoice(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
     igst_amount = Column(Numeric(14, 2), nullable=False, default=Decimal("0.00"))
 
     customer_snapshot = Column(JSON, nullable=False, default=dict)
+    # RACE-P2-5: item_signature has a plain index here, but to truly prevent the
+    # TOCTOU race in create_invoice (select-then-insert pattern), this needs a
+    # DB-level partial unique constraint:
+    #
+    #   CREATE UNIQUE INDEX uq_invoice_customer_signature
+    #   ON invoices (customer_id, item_signature)
+    #   WHERE is_deleted = FALSE;
+    #
+    # Add this via an Alembic migration. Once in place, the IntegrityError from a
+    # concurrent duplicate insert is caught by the global integrity_error_handler
+    # (returns 409 CONFLICT) — removing the need for the pre-check in create_invoice.
     item_signature = Column(String(128), nullable=False, index=True)
 
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin")

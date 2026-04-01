@@ -1,5 +1,5 @@
 # app/models/billing/loyalty_token_models.py
-# ERP-038 FIXED: Renamed from loyaltyTokens_models.py → loyalty_token_models.py
+# ERP-038 FIXED: Renamed from loyalty_token_models.py → loyalty_token_models.py
 #                (snake_case, consistent with all other model files).
 # ERP-039 FIXED: Changed relationship lazy= from "noload" to "raise" on customer and invoice.
 #                "noload" silently returns None even when the row exists — this causes

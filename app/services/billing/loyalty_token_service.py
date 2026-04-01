@@ -4,7 +4,7 @@
 #                deducts from the customer's oldest unspent tokens using a FIFO
 #                strategy and records a negative-token redemption entry for audit.
 #
-# ERP-038 NOTE:  Import from loyalty_token_models (renamed from loyaltyTokens_models).
+# ERP-038 NOTE:  Import from loyalty_token_models (renamed from loyalty_token_models).
 
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession

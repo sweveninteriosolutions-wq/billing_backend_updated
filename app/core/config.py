@@ -51,10 +51,34 @@ if IS_PRODUCTION and not DB_SSL_VERIFY:
 
 # =====================================================
 # JWT / AUTH
+# SEC-P0-1 FIXED: Added guards against weak or misconfigured JWT secrets.
+# Previously only checked for empty string. Now enforces:
+#   1. Minimum length of 32 characters (256-bit for HS256).
+#   2. Rejects the Supabase anon/service key pattern — this key is PUBLIC
+#      and must never be used as an HMAC signing secret.
+# Generate a proper secret: python -c "import secrets; print(secrets.token_hex(64))"
 # =====================================================
 JWT_ACCESS_SECRET_KEY = os.getenv("JWT_ACCESS_SECRET_KEY")
 if not JWT_ACCESS_SECRET_KEY:
     raise ValueError("JWT_ACCESS_SECRET_KEY must be set")
+
+if len(JWT_ACCESS_SECRET_KEY) < 32:
+    raise ValueError(
+        "SECURITY ERROR (SEC-P0-1): JWT_ACCESS_SECRET_KEY is too short. "
+        "Minimum 32 characters required for HS256. "
+        "Generate with: python -c \"import secrets; print(secrets.token_hex(64))\""
+    )
+
+# Detect Supabase anon/service key pattern (base64 JWT with 3 segments).
+# These are PUBLIC keys and must NEVER be used as HMAC secrets.
+_jwt_parts = JWT_ACCESS_SECRET_KEY.split(".")
+if len(_jwt_parts) == 3:
+    raise ValueError(
+        "SECURITY ERROR (SEC-P0-1): JWT_ACCESS_SECRET_KEY appears to be a Supabase "
+        "anon/service key (3-segment JWT). This key is PUBLIC and cannot be used as "
+        "an HMAC signing secret — anyone can forge tokens with it. "
+        "Generate a proper secret: python -c \"import secrets; print(secrets.token_hex(64))\""
+    )
 
 JWT_ALGORITHM = "HS256"
 

@@ -77,16 +77,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("📦 Production mode: init_models() skipped — use Alembic migrations")
 
-    # ⚠️ Scheduler control
-    if ENV == "production":
-        if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
-            scheduler.start()
-            logger.info("🕒 Scheduler started (production)")
-        else:
-            logger.info("🕒 Scheduler disabled (production)")
-    else:
+    # ⚠️ Scheduler control — SEC-P0-3 FIXED
+    # In production, the scheduler MUST run in a dedicated process (app/core/run_scheduler.py),
+    # not here. Running it here causes every Gunicorn worker to start its own scheduler
+    # instance, so cron jobs fire N times per schedule (once per worker).
+    # ENABLE_SCHEDULER must be "true" ONLY in the dedicated scheduler container/process.
+    # Never set ENABLE_SCHEDULER=true on a multi-worker API container.
+    if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
+        if ENV == "production":
+            logger.warning(
+                "SEC-P0-3 WARNING: ENABLE_SCHEDULER=true on an API process. "
+                "In production, the scheduler should run in a DEDICATED single-replica "
+                "container using app/core/run_scheduler.py. "
+                "If this process has multiple workers, jobs will fire once per worker."
+            )
         scheduler.start()
-        logger.info("🕒 Scheduler started (development)")
+        logger.info("🕒 Scheduler started (ENABLE_SCHEDULER=true)")
+    else:
+        logger.info("🕒 Scheduler disabled (ENABLE_SCHEDULER=false) — use app/core/run_scheduler.py")
 
     yield
 
@@ -125,6 +133,22 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 app.add_middleware(RateLimitMiddleware)
 
 origins = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+
+# SEC-P2-1 FIXED: Validate CORS config at startup in production.
+# If CORS_ORIGINS is empty or contains a wildcard in production, the server
+# either allows nothing (frontend breaks) or allows everything (security breach).
+if ENV == "production":
+    if not origins:
+        raise ValueError(
+            "SECURITY ERROR (SEC-P2-1): CORS_ORIGINS must be set in production. "
+            "Set it to your frontend domain(s), e.g. https://app.yourdomain.com"
+        )
+    if "*" in origins:
+        raise ValueError(
+            "SECURITY ERROR (SEC-P2-1): Wildcard '*' is not allowed in CORS_ORIGINS "
+            "in production. Specify exact frontend origin(s)."
+        )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

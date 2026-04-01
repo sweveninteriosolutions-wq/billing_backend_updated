@@ -21,7 +21,7 @@ from app.models.support.activity_models import UserActivity
 from app.models.billing.quotation_models import Quotation, QuotationItem
 from app.models.billing.invoice_models import Invoice, InvoiceItem
 from app.models.billing.payment_models import Payment
-from app.models.billing.loyaltyTokens_models import LoyaltyToken
+from app.models.billing.loyalty_token_models import LoyaltyToken
 
 # Support
 from app.models.support.complaint_models import Complaint

@@ -14,6 +14,12 @@ from app.utils.logger import get_logger
 
 logger = get_logger("auth.service")
 
+# SEC-P1-3 FIXED: Limit concurrent active sessions per user.
+# Without this, every login creates a new refresh token with no limit,
+# allowing a single user to accumulate thousands of active sessions.
+# When the limit is exceeded, the oldest active token is revoked.
+MAX_ACTIVE_SESSIONS = 3
+
 
 # =====================================================
 # LOGIN
@@ -47,12 +53,36 @@ async def login_user(db: AsyncSession, email: str, password: str):
         subject=user.username,
         token_version=user.token_version,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        role=user.role,  # PERF-P2-3: embed role for future token-only role checks
     )
 
-    refresh_value = secrets.token_urlsafe(48)
-    refresh_expiry = datetime.now(timezone.utc) + timedelta(
-        days=REFRESH_TOKEN_EXPIRE_DAYS
+    # SEC-P1-3 FIXED: Enforce MAX_ACTIVE_SESSIONS per user.
+    # Fetch all active (non-revoked, non-expired) tokens ordered oldest-first.
+    # If at or above the limit, revoke the oldest one before adding the new one.
+    now = datetime.now(timezone.utc)
+    active_result = await db.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.user_id == user.id,
+            RefreshToken.revoked.is_(False),
+            RefreshToken.expires_at > now,
+        )
+        .order_by(RefreshToken.created_at.asc())
     )
+    active_tokens = active_result.scalars().all()
+
+    if len(active_tokens) >= MAX_ACTIVE_SESSIONS:
+        # Revoke oldest tokens to stay within the limit
+        tokens_to_revoke = active_tokens[: len(active_tokens) - MAX_ACTIVE_SESSIONS + 1]
+        for old_token in tokens_to_revoke:
+            old_token.revoked = True
+        logger.info(
+            "Session limit enforced — oldest tokens revoked",
+            extra={"user_id": user.id, "revoked_count": len(tokens_to_revoke)},
+        )
+
+    refresh_value = secrets.token_urlsafe(48)
+    refresh_expiry = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
     db.add(
         RefreshToken(
@@ -139,6 +169,7 @@ async def refresh_tokens(db: AsyncSession, refresh_token_value: str):
         subject=user.username,
         token_version=user.token_version,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        role=user.role,  # PERF-P2-3: embed role
     )
 
     await db.commit()

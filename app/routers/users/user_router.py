@@ -53,6 +53,19 @@ async def list_users_api(
     return success_response("Users fetched", users)
 
 
+# SEC-P1-1 FIXED: Moved /dashboard/stats ABOVE /{user_id}.
+# Previously it was defined after /{user_id}, which caused FastAPI to match
+# GET /users/dashboard/stats with user_id="dashboard" (422 validation error).
+# Static path segments must always be registered before dynamic ones for the same method.
+@router.get("/dashboard/stats", response_model=APIResponse)
+async def dashboard_stats_api(
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_role(["admin"])),
+):
+    logger.info("User dashboard stats requested")
+    stats = await get_user_dashboard_stats(db)
+    return success_response("Dashboard stats fetched", stats)
+
 
 @router.get("/{user_id}", response_model=APIResponse)
 async def get_user_api(
@@ -99,13 +112,3 @@ async def reactivate_user_api(
     logger.info("Reactivate user", extra={"user_id": user_id})
     user = await reactivate_user(db, user_id, payload.version, admin)
     return success_response("User reactivated successfully", user)
-
-
-@router.get("/dashboard/stats", response_model=APIResponse)
-async def dashboard_stats_api(
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_role(["admin"])),
-):
-    logger.info("User dashboard stats requested")
-    stats = await get_user_dashboard_stats(db)
-    return success_response("Dashboard stats fetched", stats)

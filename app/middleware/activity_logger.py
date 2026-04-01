@@ -6,7 +6,7 @@ import logging
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.db import AsyncSessionLocal
-from app.utils.activity_helpers import log_user_activity
+from app.utils.activity_helpers import emit_activity
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
         # NEW SESSION — never reuse request DB session
         async with AsyncSessionLocal() as db:
             try:
-                await log_user_activity(
+                await emit_activity(
                     db,
                     user_id=user.id,
                     username=user.username,

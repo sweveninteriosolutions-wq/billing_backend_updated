@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, asc, desc
 from sqlalchemy.orm import noload
 
-from app.models.billing.loyaltyTokens_models import LoyaltyToken
+from app.models.billing.loyalty_token_models import LoyaltyToken
 from app.schemas.billing.loyaltyTokens_schemas import (
     LoyaltyTokenOut,
     LoyaltyTokenListData,

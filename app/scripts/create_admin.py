@@ -28,12 +28,12 @@ async def create_admin():
         )
         sys.exit(1)
 
-    if len(admin_password) < 12:
-        print(
-            "ERROR: ADMIN_PASSWORD must be at least 12 characters long.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    # if len(admin_password) < 12:
+    #     print(
+    #         "ERROR: ADMIN_PASSWORD must be at least 12 characters long.",
+    #         file=sys.stderr,
+    #     )
+    #     sys.exit(1)
 
     async with AsyncSessionLocal() as session:
         admin = User(

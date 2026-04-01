@@ -3,17 +3,24 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from decimal import Decimal
 from datetime import date
 
 from app.models.masters.discount_models import Discount
-from app.schemas.masters.discount_schemas import DiscountCreate, DiscountUpdate, DiscountOut, DiscountListData, VersionPayload
+from app.schemas.masters.discount_schemas import (
+    DiscountCreate,
+    DiscountUpdate,
+    DiscountOut,
+    DiscountListData,
+)
 from app.core.exceptions import AppException
 from app.constants.error_codes import ErrorCode
 from app.constants.activity_codes import ActivityCode
 from app.utils.activity_helpers import emit_activity
-from sqlalchemy import select, and_
 
+
+# ---------------- VALIDATION ----------------
 async def _assert_no_date_overlap(
     *,
     db: AsyncSession,
@@ -41,8 +48,6 @@ async def _assert_no_date_overlap(
         )
 
 
-
-# ---------------- VALIDATION ----------------
 def _validate_discount(discount_type: str, value: Decimal):
     if discount_type == "percentage":
         if value <= 0 or value > 100:
@@ -53,50 +58,35 @@ def _validate_discount(discount_type: str, value: Decimal):
 
 
 def _map_discount(discount: Discount) -> DiscountOut:
+    created_by = discount.__dict__.get("created_by")
+    updated_by = discount.__dict__.get("updated_by")
+
     return DiscountOut(
         id=discount.id,
         name=discount.name,
         code=discount.code,
         discount_type=discount.discount_type,
         discount_value=discount.discount_value,
-
         is_active=discount.is_active,
         is_deleted=discount.is_deleted,
-
         start_date=discount.start_date,
         end_date=discount.end_date,
         usage_limit=discount.usage_limit,
         used_count=discount.used_count,
         note=discount.note,
-
         created_at=discount.created_at,
         updated_at=discount.updated_at,
-
         created_by=discount.created_by_id,
         updated_by=discount.updated_by_id,
-
-        created_by_name=(
-            discount.created_by.username
-            if getattr(discount, "created_by", None)
-            else None
-        ),
-        updated_by_name=(
-            discount.updated_by.username
-            if getattr(discount, "updated_by", None)
-            else None
-        ),
+        created_by_name=created_by.username if created_by else None,
+        updated_by_name=updated_by.username if updated_by else None,
     )
-
 
 
 # ---------------- CREATE ----------------
 async def create_discount(db: AsyncSession, payload: DiscountCreate, user):
     if payload.start_date >= payload.end_date:
-        raise AppException(
-            400,
-            "Invalid date range",
-            ErrorCode.DISCOUNT_INVALID_RANGE,
-        )
+        raise AppException(400, "Invalid date range", ErrorCode.DISCOUNT_INVALID_RANGE)
 
     _validate_discount(payload.discount_type, payload.discount_value)
 
@@ -117,33 +107,41 @@ async def create_discount(db: AsyncSession, payload: DiscountCreate, user):
         db.add(discount)
         await db.flush()
     except IntegrityError:
-        raise AppException(
-            409,
-            "Discount code already exists",
-            ErrorCode.DISCOUNT_CODE_EXISTS,
-        )
+        raise AppException(409, "Discount code already exists", ErrorCode.DISCOUNT_CODE_EXISTS)
 
     await emit_activity(
-    db=db,
-    user_id=user.id,
-    username=user.username,
-    code=ActivityCode.CREATE_DISCOUNT,
-    actor_role=user.role.capitalize(),
-    actor_email=user.username,
-    target_name=discount.name,
-    target_code=discount.code,
-)
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.CREATE_DISCOUNT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=discount.name,
+        target_code=discount.code,
+    )
 
     await db.commit()
-    return _map_discount(discount)
 
+    return await get_discount(db, discount.id)
 
 
 # ---------------- GET ----------------
 async def get_discount(db: AsyncSession, discount_id: int):
-    discount = await db.get(Discount, discount_id)
-    if not discount or discount.is_deleted:
+    stmt = (
+        select(Discount)
+        .options(
+            selectinload(Discount.created_by),
+            selectinload(Discount.updated_by),
+        )
+        .where(Discount.id == discount_id, Discount.is_deleted.is_(False))
+    )
+
+    result = await db.execute(stmt)
+    discount = result.scalar_one_or_none()
+
+    if not discount:
         raise AppException(404, "Discount not found", ErrorCode.DISCOUNT_NOT_FOUND)
+
     return _map_discount(discount)
 
 
@@ -161,7 +159,10 @@ async def list_discounts(
     page,
     page_size,
 ):
-    query = select(Discount)
+    query = select(Discount).options(
+        selectinload(Discount.created_by),
+        selectinload(Discount.updated_by),
+    )
 
     if code:
         query = query.where(Discount.code.ilike(f"%{code}%"))
@@ -186,9 +187,11 @@ async def list_discounts(
         .limit(page_size)
     )
 
+    items = result.unique().scalars().all()
+
     return DiscountListData(
         total=total or 0,
-        items=[_map_discount(d) for d in result.scalars().all()],
+        items=[_map_discount(d) for d in items],
     )
 
 
@@ -200,14 +203,12 @@ async def update_discount(
     user,
 ):
     current = await db.get(Discount, discount_id)
+
     if not current or current.is_deleted:
-        raise AppException(
-            404,
-            "Discount not found",
-            ErrorCode.DISCOUNT_NOT_FOUND,
-        )
+        raise AppException(404, "Discount not found", ErrorCode.DISCOUNT_NOT_FOUND)
 
     data = payload.model_dump(exclude_unset=True, exclude={"version"})
+
     if not data:
         raise AppException(400, "No changes detected", ErrorCode.VALIDATION_ERROR)
 
@@ -215,11 +216,7 @@ async def update_discount(
     new_end = data.get("end_date", current.end_date)
 
     if new_start >= new_end:
-        raise AppException(
-            400,
-            "Invalid date range",
-            ErrorCode.DISCOUNT_INVALID_RANGE,
-        )
+        raise AppException(400, "Invalid date range", ErrorCode.DISCOUNT_INVALID_RANGE)
 
     await _assert_no_date_overlap(
         db=db,
@@ -237,162 +234,104 @@ async def update_discount(
 
     stmt = (
         update(Discount)
-        .where(
-            Discount.id == discount_id,
-            Discount.is_deleted.is_(False),
-        )
-        .values(
-            **data,
-            updated_by_id=user.id,
-        )
-        .returning(Discount)
+        .where(Discount.id == discount_id, Discount.is_deleted.is_(False))
+        .values(**data, updated_by_id=user.id)
     )
 
     result = await db.execute(stmt)
-    discount = result.scalar_one_or_none()
 
-    if not discount:
-        raise AppException(
-            409,
-            "Discount was modified by another process",
-            ErrorCode.DISCOUNT_VERSION_CONFLICT,
-        )
+    if result.rowcount == 0:
+        raise AppException(409, "Discount update failed", ErrorCode.DISCOUNT_VERSION_CONFLICT)
 
     await emit_activity(
-    db=db,
-    user_id=user.id,
-    username=user.username,
-    code=ActivityCode.UPDATE_DISCOUNT,
-    actor_role=user.role.capitalize(),
-    actor_email=user.username,
-    target_name=discount.name,
-    target_code=discount.code,
-    changes=", ".join(data.keys()),
-)
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.UPDATE_DISCOUNT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=current.name,
+        target_code=current.code,
+        changes=", ".join(data.keys()),
+    )
 
     await db.commit()
-    return _map_discount(discount)
+
+    return await get_discount(db, discount_id)
+
 
 # ---------------- DEACTIVATE ----------------
-async def deactivate_discount(
-    db: AsyncSession,
-    discount_id: int,
-    user,
-):
+async def deactivate_discount(db: AsyncSession, discount_id: int, user):
     stmt = (
         update(Discount)
-        .where(
-            Discount.id == discount_id,
-            Discount.is_deleted.is_(False),
-        )
-        .values(
-            is_active=False,
-            is_deleted=True,
-            updated_by_id=user.id,
-        )
-        .returning(Discount)
+        .where(Discount.id == discount_id, Discount.is_deleted.is_(False))
+        .values(is_active=False, is_deleted=True, updated_by_id=user.id)
     )
 
     result = await db.execute(stmt)
-    discount = result.scalar_one_or_none()
 
-    if not discount:
-        raise AppException(
-            409,
-            "Discount was modified or already deleted",
-            ErrorCode.DISCOUNT_VERSION_CONFLICT,
-        )
+    if result.rowcount == 0:
+        raise AppException(409, "Already deleted", ErrorCode.DISCOUNT_VERSION_CONFLICT)
 
     await emit_activity(
-    db=db,
-    user_id=user.id,
-    username=user.username,
-    code=ActivityCode.DEACTIVATE_DISCOUNT,
-    actor_role=user.role.capitalize(),
-    actor_email=user.username,
-    target_name=discount.name,
-    target_code=discount.code,
-)
-
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.DEACTIVATE_DISCOUNT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name="",
+        target_code="",
+    )
 
     await db.commit()
-    return _map_discount(discount)
+
+    return await get_discount(db, discount_id)
+
 
 # ---------------- REACTIVATE ----------------
-async def reactivate_discount(
-    db: AsyncSession,
-    discount_id: int,
-    user,
-):
+async def reactivate_discount(db: AsyncSession, discount_id: int, user):
     discount = await db.get(Discount, discount_id)
 
     if not discount:
-        raise AppException(
-            404,
-            "Discount not found",
-            ErrorCode.DISCOUNT_NOT_FOUND,
-        )
+        raise AppException(404, "Discount not found", ErrorCode.DISCOUNT_NOT_FOUND)
 
     if not discount.is_deleted:
-        raise AppException(
-            400,
-            "Discount is already active",
-            ErrorCode.VALIDATION_ERROR,
-        )
+        raise AppException(400, "Discount is already active", ErrorCode.VALIDATION_ERROR)
 
     if discount.end_date < date.today():
-        raise AppException(
-            400,
-            "Cannot reactivate expired discount",
-            ErrorCode.DISCOUNT_EXPIRED,
-        )
+        raise AppException(400, "Cannot reactivate expired discount", ErrorCode.DISCOUNT_EXPIRED)
 
-    if (
-        discount.usage_limit is not None
-        and discount.used_count >= discount.usage_limit
-    ):
-        raise AppException(
-            400,
-            "Discount usage limit already reached",
-            ErrorCode.DISCOUNT_USAGE_LIMIT_REACHED,
-        )
+    if discount.usage_limit is not None and discount.used_count >= discount.usage_limit:
+        raise AppException(400, "Discount usage limit already reached", ErrorCode.DISCOUNT_USAGE_LIMIT_REACHED)
 
     stmt = (
         update(Discount)
-        .where(
-            Discount.id == discount_id,
-            Discount.is_deleted.is_(True),
-        )
+        .where(Discount.id == discount_id, Discount.is_deleted.is_(True))
         .values(
             is_deleted=False,
             is_active=True,
             version=Discount.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Discount)
     )
 
     result = await db.execute(stmt)
-    discount = result.scalar_one_or_none()
 
-    if not discount:
-        raise AppException(
-            409,
-            "Discount was modified by another process",
-            ErrorCode.DISCOUNT_VERSION_CONFLICT,
-        )
+    if result.rowcount == 0:
+        raise AppException(409, "Discount update failed", ErrorCode.DISCOUNT_VERSION_CONFLICT)
 
     await emit_activity(
-    db=db,
-    user_id=user.id,
-    username=user.username,
-    code=ActivityCode.REACTIVATE_DISCOUNT,
-    actor_role=user.role.capitalize(),
-    actor_email=user.username,
-    target_name=discount.name,
-    target_code=discount.code,
-)
-
+        db=db,
+        user_id=user.id,
+        username=user.username,
+        code=ActivityCode.REACTIVATE_DISCOUNT,
+        actor_role=user.role.capitalize(),
+        actor_email=user.username,
+        target_name=discount.name,
+        target_code=discount.code,
+    )
 
     await db.commit()
-    return _map_discount(discount)
+
+    return await get_discount(db, discount_id)
