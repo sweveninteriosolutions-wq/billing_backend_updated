@@ -52,8 +52,6 @@ if DB_TYPE == "postgres":
         "ssl": ssl_ctx,
         # Disable prepared statements for Supabase/pgBouncer compatibility
         "statement_cache_size": 0,
-        "prepared_statement_cache_size": 0,
-        "server_settings": {"prepareThreshold": "0"},
     }
 
     pool_args = {
