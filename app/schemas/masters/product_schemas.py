@@ -9,6 +9,7 @@ from datetime import datetime
 class ProductCreate(BaseModel):
     sku: str
     name: str
+    hsn_code: Optional[int] = None
     category: Optional[str] = None
     price: Decimal = Field(gt=0)
     min_stock_threshold: int = Field(ge=0)
@@ -29,7 +30,7 @@ class ProductOut(BaseModel):
     id: int
     sku: str
     name: str
-    hsn_code: int
+    hsn_code: Optional[int] = None  # nullable in DB
     category: Optional[str]
     price: Decimal
     min_stock_threshold: int

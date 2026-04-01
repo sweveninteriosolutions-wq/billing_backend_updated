@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 import uuid
 import re
 from typing import Optional
@@ -37,6 +38,9 @@ def generate_supplier_code(name: str, phone: Optional[str]) -> str:
 # MAPPER
 # =========================
 def _map_supplier(supplier: Supplier) -> SupplierOut:
+    # ✅ MANDATORY: use __dict__ — never getattr() on lazy='raise' relationships
+    created_by = supplier.__dict__.get("created_by")
+    updated_by = supplier.__dict__.get("updated_by")
     return SupplierOut(
         id=supplier.id,
         supplier_code=supplier.supplier_code,
@@ -51,20 +55,24 @@ def _map_supplier(supplier: Supplier) -> SupplierOut:
 
         created_by=supplier.created_by_id,
         updated_by=supplier.updated_by_id,
-        created_by_name=(
-            supplier.created_by.username
-            if getattr(supplier, "created_by", None)
-            else None
-        ),
-        updated_by_name=(
-            supplier.updated_by.username
-            if getattr(supplier, "updated_by", None)
-            else None
-        ),
+        created_by_name=created_by.username if created_by else None,
+        updated_by_name=updated_by.username if updated_by else None,
 
         created_at=supplier.created_at,
         updated_at=supplier.updated_at,
     )
+
+
+async def _get_supplier_with_relations(db: AsyncSession, supplier_id: int) -> Supplier | None:
+    result = await db.execute(
+        select(Supplier)
+        .options(
+            selectinload(Supplier.created_by),
+            selectinload(Supplier.updated_by),
+        )
+        .where(Supplier.id == supplier_id)
+    )
+    return result.scalar_one_or_none()
 
 
 # =========================
@@ -121,8 +129,9 @@ async def create_supplier(
     )
 
     await db.commit()
-    await db.refresh(supplier)
 
+    # ✅ REFETCH WITH RELATIONS
+    supplier = await _get_supplier_with_relations(db, supplier.id)
     return _map_supplier(supplier)
 
 
@@ -130,7 +139,7 @@ async def create_supplier(
 # GET
 # =========================
 async def get_supplier(db: AsyncSession, supplier_id: int):
-    supplier = await db.get(Supplier, supplier_id)
+    supplier = await _get_supplier_with_relations(db, supplier_id)
     if not supplier or supplier.is_deleted:
         raise AppException(
             404,
@@ -174,7 +183,7 @@ async def list_suppliers(
     # 🔍 Search filter
     if search:
         conditions.append(
-            "(s.name ILIKE :search OR s.email ILIKE :search OR s.phone ILIKE :search)"
+            "(LOWER(s.name) LIKE LOWER(:search) OR LOWER(s.email) LIKE LOWER(:search) OR LOWER(s.phone) LIKE LOWER(:search))"
         )
         params["search"] = f"%{search}%"
 
@@ -303,13 +312,11 @@ async def update_supplier(
             version=Supplier.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Supplier)
     )
 
     result = await db.execute(stmt)
-    supplier = result.scalar_one_or_none()
 
-    if not supplier:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Supplier was modified by another process",
@@ -323,11 +330,14 @@ async def update_supplier(
         code=ActivityCode.UPDATE_SUPPLIER,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=supplier.name,
+        target_name=current.name,
         changes=", ".join(changes),
     )
 
     await db.commit()
+
+    # ✅ REFETCH WITH RELATIONS
+    supplier = await _get_supplier_with_relations(db, supplier_id)
     return _map_supplier(supplier)
 
 
@@ -342,6 +352,15 @@ async def deactivate_supplier(
     version: int,
     user,
 ):
+    # Fetch current for activity name before update
+    current = await db.get(Supplier, supplier_id)
+    if not current or current.is_deleted:
+        raise AppException(
+            409,
+            "Supplier was modified by another process or already deactivated",
+            ErrorCode.SUPPLIER_VERSION_CONFLICT,
+        )
+
     stmt = (
         update(Supplier)
         .where(
@@ -354,13 +373,11 @@ async def deactivate_supplier(
             version=Supplier.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Supplier)
     )
 
     result = await db.execute(stmt)
-    supplier = result.scalar_one_or_none()
 
-    if not supplier:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Supplier was modified by another process or already deactivated",
@@ -374,8 +391,11 @@ async def deactivate_supplier(
         code=ActivityCode.DEACTIVATE_SUPPLIER,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=supplier.name,
+        target_name=current.name,
     )
 
     await db.commit()
+
+    # ✅ REFETCH WITH RELATIONS
+    supplier = await _get_supplier_with_relations(db, supplier_id)
     return _map_supplier(supplier)

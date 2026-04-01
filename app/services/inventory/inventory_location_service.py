@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.models.inventory.inventory_location_models import InventoryLocation
 from app.schemas.inventory.inventory_location_schemas import (
@@ -18,6 +19,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 def _map_location(loc: InventoryLocation) -> InventoryLocationOut:
+    # ✅ Use __dict__ to avoid triggering lazy='raise' on audit relationships
+    created_by = loc.__dict__.get("created_by")
+    updated_by = loc.__dict__.get("updated_by")
     return InventoryLocationOut(
         id=loc.id,
         code=loc.code,
@@ -28,9 +32,21 @@ def _map_location(loc: InventoryLocation) -> InventoryLocationOut:
         updated_at=loc.updated_at,
         created_by=loc.created_by_id,
         updated_by=loc.updated_by_id,
-        created_by_name=loc.created_by.username if loc.created_by else None,
-        updated_by_name=loc.updated_by.username if loc.updated_by else None,
+        created_by_name=created_by.username if created_by else None,
+        updated_by_name=updated_by.username if updated_by else None,
     )
+
+
+async def _get_location_with_relations(db: AsyncSession, location_id: int) -> InventoryLocation | None:
+    result = await db.execute(
+        select(InventoryLocation)
+        .options(
+            selectinload(InventoryLocation.created_by),
+            selectinload(InventoryLocation.updated_by),
+        )
+        .where(InventoryLocation.id == location_id)
+    )
+    return result.scalar_one_or_none()
 
 async def create_location(db: AsyncSession, payload: InventoryLocationCreate, user):
     logger.info("Create inventory location", extra={"code": payload.code})
@@ -64,7 +80,9 @@ async def create_location(db: AsyncSession, payload: InventoryLocationCreate, us
     )
 
     await db.commit()
-    await db.refresh(location)
+
+    # ✅ REFETCH WITH RELATIONS
+    location = await _get_location_with_relations(db, location.id)
     return _map_location(location)
 
 async def list_locations(
@@ -75,12 +93,21 @@ async def list_locations(
 ):
     logger.info("List inventory locations", extra={"active_only": active_only})
 
-    query = select(InventoryLocation).where(InventoryLocation.is_deleted.is_(False))
+    query = (
+        select(InventoryLocation)
+        .options(
+            selectinload(InventoryLocation.created_by),
+            selectinload(InventoryLocation.updated_by),
+        )
+        .where(InventoryLocation.is_deleted.is_(False))
+    )
 
     if active_only:
         query = query.where(InventoryLocation.is_active.is_(True))
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    total = await db.scalar(select(func.count()).select_from(
+        select(InventoryLocation).where(InventoryLocation.is_deleted.is_(False)).subquery()
+    ))
 
     result = await db.execute(
         query.order_by(InventoryLocation.created_at.desc())
@@ -88,9 +115,10 @@ async def list_locations(
         .limit(page_size)
     )
 
+    locations = result.scalars().all()
     return InventoryLocationListData(
         total=total or 0,
-        items=[_map_location(l) for l in result.scalars().all()],
+        items=[_map_location(l) for l in locations],
     )
 
 async def update_location(
@@ -161,12 +189,10 @@ async def update_location(
             version=InventoryLocation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(InventoryLocation)
     )
 
     try:
         result = await db.execute(stmt)
-        location = result.scalar_one_or_none()
     except IntegrityError:
         # race-condition safety net
         raise AppException(
@@ -175,7 +201,7 @@ async def update_location(
             ErrorCode.LOCATION_CODE_EXISTS,
         )
 
-    if not location:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Location modified by another process",
@@ -189,14 +215,26 @@ async def update_location(
         code=ActivityCode.UPDATE_LOCATION,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=location.code,
+        target_name=current.code,
         changes=", ".join(changes),
     )
 
     await db.commit()
+
+    # ✅ REFETCH WITH RELATIONS
+    location = await _get_location_with_relations(db, location_id)
     return _map_location(location)
 
 async def deactivate_location(db: AsyncSession, location_id: int, user):
+    # Fetch current for activity name
+    current_loc = await db.get(InventoryLocation, location_id)
+    if not current_loc or not current_loc.is_active or current_loc.is_deleted:
+        raise AppException(
+            409,
+            "Location already inactive or missing",
+            ErrorCode.LOCATION_CANNOT_DEACTIVATE,
+        )
+
     stmt = (
         update(InventoryLocation)
         .where(
@@ -209,13 +247,11 @@ async def deactivate_location(db: AsyncSession, location_id: int, user):
             version=InventoryLocation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(InventoryLocation)
     )
 
     result = await db.execute(stmt)
-    location = result.scalar_one_or_none()
 
-    if not location:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Location already inactive or missing",
@@ -229,13 +265,25 @@ async def deactivate_location(db: AsyncSession, location_id: int, user):
         code=ActivityCode.DEACTIVATE_LOCATION,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=location.code,
+        target_name=current_loc.code,
     )
 
     await db.commit()
+
+    # ✅ REFETCH WITH RELATIONS
+    location = await _get_location_with_relations(db, location_id)
     return _map_location(location)
 
 async def reactivate_location(db: AsyncSession, location_id: int, user):
+    # Fetch current for activity name
+    current_loc = await db.get(InventoryLocation, location_id)
+    if not current_loc or current_loc.is_active or current_loc.is_deleted:
+        raise AppException(
+            409,
+            "Location already active or missing",
+            ErrorCode.LOCATION_CANNOT_ACTIVATE,
+        )
+
     stmt = (
         update(InventoryLocation)
         .where(
@@ -248,13 +296,11 @@ async def reactivate_location(db: AsyncSession, location_id: int, user):
             version=InventoryLocation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(InventoryLocation)
     )
 
     result = await db.execute(stmt)
-    location = result.scalar_one_or_none()
 
-    if not location:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Location already active or missing",
@@ -268,9 +314,12 @@ async def reactivate_location(db: AsyncSession, location_id: int, user):
         code=ActivityCode.REACTIVATE_LOCATION,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=location.code,
+        target_name=current_loc.code,
     )
 
     await db.commit()
+
+    # ✅ REFETCH WITH RELATIONS
+    location = await _get_location_with_relations(db, location_id)
     return _map_location(location)
 

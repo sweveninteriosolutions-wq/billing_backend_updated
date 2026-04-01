@@ -49,29 +49,25 @@ async def create_complaint(
     - One complaint per customer + invoice + product
     """
 
-    conditions = [
-        Complaint.customer_id == payload.customer_id,
-        Complaint.invoice_id == payload.invoice_id,
-        Complaint.is_deleted.is_(False),
-    ]
-
-    if payload.product_id:
-        conditions.append(Complaint.product_id == payload.product_id)
-    else:
-        conditions.append(Complaint.product_id.is_(None))
-
+    # ✅ FIXED: complaint object MUST be created before db.add()
+    # Previous code had db.add(complaint) before the Complaint() constructor — NameError crash.
     from sqlalchemy.exc import IntegrityError
 
-    try:
-        db.add(complaint)
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
+    # FIX: SQLite doesn't support partial unique indexes (WHERE clause).
+    # Enforce uniqueness at application level for SQLite compatibility.
+    existing = await db.scalar(
+        select(Complaint.id).where(
+            Complaint.customer_id == payload.customer_id,
+            Complaint.invoice_id == payload.invoice_id,
+            Complaint.product_id == payload.product_id,
+            Complaint.is_deleted.is_(False),
+        )
+    )
+    if existing:
         raise HTTPException(
             status_code=400,
             detail="Complaint already exists for this invoice & product",
         )
-
 
     complaint = Complaint(
         **payload.model_dump(),
@@ -79,8 +75,15 @@ async def create_complaint(
         updated_by_id=current_user.id,
     )
 
-    db.add(complaint)
-    await db.flush()  # ensure complaint.id is available
+    try:
+        db.add(complaint)
+        await db.flush()  # ensure complaint.id is available, catch constraint violations early
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Complaint already exists for this invoice & product",
+        )
 
     await emit_activity(
         db=db,
@@ -324,6 +327,8 @@ async def delete_complaint(
     )
 
     await db.commit()
+    # FIX: refresh to load server-side updated_at and avoid MissingGreenlet
+    await db.refresh(complaint)
 
     return ComplaintResponse(
         message="Complaint deleted successfully",

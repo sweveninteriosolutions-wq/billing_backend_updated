@@ -45,8 +45,13 @@ class AuditMixin:
 
     @hybrid_property
     def created_by_username(self):
-        return self.created_by.username if self.created_by else None
+        # FIXED (BUG-4): Use __dict__ lookup instead of self.created_by to avoid
+        # triggering lazy="raise" when the relationship has not been selectinloaded.
+        # Callers that need this value must load it via selectinload(Model.created_by).
+        cb = self.__dict__.get("created_by")
+        return cb.username if cb else None
 
     @hybrid_property
     def updated_by_username(self):
-        return self.updated_by.username if self.updated_by else None
+        ub = self.__dict__.get("updated_by")
+        return ub.username if ub else None

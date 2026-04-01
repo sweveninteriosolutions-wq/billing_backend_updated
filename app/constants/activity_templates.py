@@ -174,6 +174,35 @@ ACTIVITY_TEMPLATES = {
     ActivityCode.ACTIVATE_DISCOUNT:
         "{actor_role} ({actor_email}) activated discount {target_name} ({target_code})",
     
+    # ---------------- PURCHASE ORDERS ----------------
+    ActivityCode.CREATE_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) created purchase order {target_name}",
+
+    ActivityCode.SUBMIT_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) submitted purchase order {target_name}",
+
+    ActivityCode.APPROVE_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) approved purchase order {target_name}",
+
+    ActivityCode.CANCEL_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) cancelled purchase order {target_name}",
+
+    ActivityCode.RECEIVE_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) received purchase order {target_name}",
+
+    ActivityCode.UPDATE_PURCHASE_ORDER:
+        "{actor_role} ({actor_email}) updated purchase order {target_name}",
+
+    # ---------------- WAREHOUSES ----------------
+    ActivityCode.CREATE_WAREHOUSE:
+        "{actor_role} ({actor_email}) created warehouse {target_name}",
+
+    ActivityCode.UPDATE_WAREHOUSE:
+        "{actor_role} ({actor_email}) updated warehouse {target_name}",
+
+    ActivityCode.DELETE_WAREHOUSE:
+        "{actor_role} ({actor_email}) deleted warehouse {target_name}",
+
     # ---------------- STOCK TRANSFERS ----------------
     ActivityCode.CREATE_STOCK_TRANSFER:
         "{actor_role} ({actor_email}) created stock transfer {target_name}",

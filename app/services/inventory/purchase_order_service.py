@@ -64,7 +64,7 @@ def _map_po(po: PurchaseOrder) -> PurchaseOrderOut:
     )
 
 
-async def _fetch_po_with_relations(db: AsyncSession, po_id: int) -> PurchaseOrder:
+async def _fetch_po_with_relations(db: AsyncSession, po_id: int) -> PurchaseOrderOut:
     result = await db.execute(
         select(PurchaseOrder)
         .options(
@@ -77,7 +77,7 @@ async def _fetch_po_with_relations(db: AsyncSession, po_id: int) -> PurchaseOrde
     po = result.scalar_one_or_none()
     if not po:
         raise AppException(404, "Purchase order not found", ErrorCode.PURCHASE_ORDER_NOT_FOUND)
-    return po
+    return _map_po(po)
 
 
 async def create_purchase_order(
@@ -136,11 +136,12 @@ async def create_purchase_order(
 
     db.add(po)
     await db.flush()
-    await db.refresh(po, attribute_names=["items", "supplier", "location"])
 
-    result = _map_po(po)
+    # Capture po_number for activity log before commit clears identity map.
+    po_number = po.po_number
+    po_id = po.id
 
-    # ERP-020 FIXED: Use correct activity code CREATE_PURCHASE_ORDER (was CREATE_STOCK_TRANSFER).
+    # ERP-020 FIXED: Use correct activity code CREATE_PURCHASE_ORDER.
     # ERP-014 pattern: emit_activity BEFORE commit.
     await emit_activity(
         db=db,
@@ -149,11 +150,16 @@ async def create_purchase_order(
         code=ActivityCode.CREATE_PURCHASE_ORDER,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=po.po_number,
+        target_name=po_number,
     )
 
     await db.commit()
-    return result
+
+    # FIXED (BUG-3): Previously used db.refresh(po, attribute_names=["items","supplier","location"])
+    # which loads items as GRNItem ORM objects but does NOT load items[i].product sub-relation.
+    # _map_po then accessed i.product.name → MissingGreenlet crash on lazy="raise".
+    # Fix: use _fetch_po_with_relations which selectinloads the full graph including item.product.
+    return await _fetch_po_with_relations(db, po_id)
 
 
 async def list_purchase_orders(
@@ -209,8 +215,7 @@ async def list_purchase_orders(
 
 
 async def get_purchase_order(db: AsyncSession, po_id: int) -> PurchaseOrderOut:
-    po = await _fetch_po_with_relations(db, po_id)
-    return _map_po(po)
+    return await _fetch_po_with_relations(db, po_id)
 
 
 async def submit_purchase_order(db: AsyncSession, po_id: int, version: int, user) -> PurchaseOrderOut:

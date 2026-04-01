@@ -89,6 +89,9 @@ async def _fetch_grn_items(db: AsyncSession, grn_id: int, lock: bool = False):
 # SHARED RESPONSE BUILDER
 # =====================================================
 def _build_grn_out(grn: GRN, items: list[GRNItem]) -> GRNOutSchema:
+    # ✅ Use __dict__ to avoid lazy='raise' crash on audit relationships
+    created_by = grn.__dict__.get("created_by")
+    updated_by = grn.__dict__.get("updated_by")
     return GRNOutSchema(
         id=grn.id,
         supplier_id=grn.supplier_id,
@@ -101,8 +104,8 @@ def _build_grn_out(grn: GRN, items: list[GRNItem]) -> GRNOutSchema:
         created_at=grn.created_at,
         created_by=grn.created_by_id,
         updated_by=grn.updated_by_id,
-        created_by_name=grn.created_by_username,
-        updated_by_name=grn.updated_by_username,
+        created_by_name=created_by.username if created_by else None,
+        updated_by_name=updated_by.username if updated_by else None,
         items=[
             {
                 "product_id": i.product_id,
@@ -112,6 +115,20 @@ def _build_grn_out(grn: GRN, items: list[GRNItem]) -> GRNOutSchema:
             for i in items
         ],
     )
+
+
+async def _get_grn_with_relations(db: AsyncSession, grn_id: int) -> GRN | None:
+    """Fetch a GRN with all relationships needed for response building."""
+    result = await db.execute(
+        select(GRN)
+        .options(
+            selectinload(GRN.items),
+            selectinload(GRN.created_by),
+            selectinload(GRN.updated_by),
+        )
+        .where(GRN.id == grn_id, GRN.is_deleted.is_(False))
+    )
+    return result.scalar_one_or_none()
 
 
 # =====================================================
@@ -492,6 +509,7 @@ async def verify_grn(db: AsyncSession, grn_id: int, user: User) -> GRNOutSchema:
         )
 
     grn.status = GRNStatus.VERIFIED
+    grn.version += 1
     grn.updated_by_id = user.id
 
     await emit_activity(
@@ -500,8 +518,12 @@ async def verify_grn(db: AsyncSession, grn_id: int, user: User) -> GRNOutSchema:
         actor_email=user.username, target_name=f"GRN {grn.id}",
     )
 
+    grn_id = grn.id
     await db.commit()
-    return _build_grn_out(grn, items)
+
+    # ✅ REFETCH WITH RELATIONS
+    grn = await _get_grn_with_relations(db, grn_id)
+    return _build_grn_out(grn, grn.items)
 
 
 # =====================================================
@@ -526,6 +548,7 @@ async def cancel_grn(db: AsyncSession, grn_id: int, user: User) -> GRNOutSchema:
         raise AppException(409, "Only draft GRNs can be cancelled", ErrorCode.GRN_INVALID_STATUS)
 
     grn.status = GRNStatus.CANCELLED
+    grn.version += 1
     grn.updated_by_id = user.id
 
     await emit_activity(
@@ -534,10 +557,12 @@ async def cancel_grn(db: AsyncSession, grn_id: int, user: User) -> GRNOutSchema:
         actor_email=user.username, target_name=f"GRN {grn.id}",
     )
 
+    grn_id = grn.id
     await db.commit()
 
-    items = await _fetch_grn_items(db, grn.id)
-    return _build_grn_out(grn, items)
+    # ✅ REFETCH WITH RELATIONS
+    grn = await _get_grn_with_relations(db, grn_id)
+    return _build_grn_out(grn, grn.items)
 
 
 # Deprecated alias — router should be updated to call cancel_grn directly

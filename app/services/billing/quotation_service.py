@@ -158,8 +158,9 @@ def _map_quotation(q: Quotation) -> QuotationOut:
                 "quantity": i.quantity,
                 "unit_price": i.unit_price,
                 "line_total": i.line_total,
-                "sku": getattr(i.product, "sku", None),
-                "category": getattr(i.product, "category", None),
+                # ✅ FIXED: use __dict__ instead of getattr() to avoid lazy='raise' crash
+                "sku": i.__dict__.get("product") and i.__dict__["product"].sku,
+                "category": i.__dict__.get("product") and i.__dict__["product"].category,
             }
             for i in q.items
         ],
@@ -292,60 +293,105 @@ async def list_quotations(
     order: str = "desc",
     is_deleted: bool | None = None,
 ) -> QuotationListData:
+    # NOTE: Previously used QuotationView (a DB view) which doesn't exist in SQLite
+    # test environments. Replaced with a direct query on Quotation + Customer tables
+    # that works in both SQLite and PostgreSQL.
 
-    query = select(QuotationView)
+    filters = []
 
     if is_deleted is not True:
-        query = query.where(QuotationView.is_deleted.is_(False))
+        filters.append(Quotation.is_deleted.is_(False))
 
     if customer_id:
-        query = query.where(QuotationView.customer_id == customer_id)
+        filters.append(Quotation.customer_id == customer_id)
 
     if status:
-        query = query.where(QuotationView.status == status)
+        filters.append(Quotation.status == status)
+
+    # Customer join for name + search
+    base = (
+        select(
+            Quotation,
+            Customer.name.label("customer_name"),
+        )
+        .join(Customer, Customer.id == Quotation.customer_id)
+        .where(*filters)
+    )
 
     if search:
-        query = query.where(
-            QuotationView.customer_name.ilike(f"%{search}%")
-            | QuotationView.quotation_number.ilike(f"%{search}%")
+        base = base.where(
+            Customer.name.ilike(f"%{search}%")
+            | Quotation.quotation_number.ilike(f"%{search}%")
         )
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    # Count
+    count_q = select(func.count(Quotation.id)).join(Customer, Customer.id == Quotation.customer_id).where(*filters)
+    if search:
+        count_q = count_q.where(
+            Customer.name.ilike(f"%{search}%")
+            | Quotation.quotation_number.ilike(f"%{search}%")
+        )
+    total = await db.scalar(count_q) or 0
 
     sort_map = {
-        "updated_at": QuotationView.updated_at,
-        "quotation_number": QuotationView.quotation_number,
-        "total_amount": QuotationView.total_amount,
+        "updated_at": Quotation.updated_at,
+        "quotation_number": Quotation.quotation_number,
+        "total_amount": Quotation.total_amount,
+        "created_at": Quotation.created_at,
     }
-
-    sort_col = sort_map.get(sort_by, QuotationView.updated_at)
+    sort_col = sort_map.get(sort_by, Quotation.updated_at)
     is_asc = order.lower() == "asc"
 
-    query = query.order_by(
+    base = base.order_by(
         asc(sort_col) if is_asc else desc(sort_col),
-        asc(QuotationView.id) if is_asc else desc(QuotationView.id),
+        asc(Quotation.id) if is_asc else desc(Quotation.id),
     ).offset((page - 1) * page_size).limit(page_size)
 
-    rows = (await db.execute(query)).scalars().all()
+    rows = (await db.execute(base)).all()
+
+    # Count items per quotation using selectinload would need a separate pass;
+    # use a subquery for items_count
+    quotation_ids = [r.Quotation.id for r in rows]
+    items_count_map: Dict[int, int] = {}
+    if quotation_ids:
+        ic_rows = await db.execute(
+            select(QuotationItem.quotation_id, func.count(QuotationItem.id).label("cnt"))
+            .where(
+                QuotationItem.quotation_id.in_(quotation_ids),
+                QuotationItem.is_deleted.is_(False),
+            )
+            .group_by(QuotationItem.quotation_id)
+        )
+        items_count_map = {r.quotation_id: r.cnt for r in ic_rows}
+
+    # created_by_name via a separate lookup using created_by_id
+    from app.models.users.user_models import User
+    user_ids = {r.Quotation.created_by_id for r in rows if r.Quotation.created_by_id}
+    user_name_map: Dict[int, str] = {}
+    if user_ids:
+        u_rows = await db.execute(
+            select(User.id, User.username).where(User.id.in_(user_ids))
+        )
+        user_name_map = {r.id: r.username for r in u_rows}
 
     return QuotationListData(
         total=total,
         items=[
             QuotationListItem(
-                id=r.id,
-                quotation_number=r.quotation_number,
-                customer_id=r.customer_id,
+                id=r.Quotation.id,
+                quotation_number=r.Quotation.quotation_number,
+                customer_id=r.Quotation.customer_id,
                 customer_name=r.customer_name,
-                status=r.status,
-                items_count=r.items_count,
-                subtotal_amount=r.subtotal_amount,
-                tax_amount=r.tax_amount,
-                total_amount=r.total_amount,
-                valid_until=r.valid_until,
-                version=r.version,
-                is_deleted=r.is_deleted,
-                created_at=r.created_at,
-                created_by_name=r.created_by_name,
+                status=r.Quotation.status,
+                items_count=items_count_map.get(r.Quotation.id, 0),
+                subtotal_amount=r.Quotation.subtotal_amount,
+                tax_amount=r.Quotation.tax_amount,
+                total_amount=r.Quotation.total_amount,
+                valid_until=r.Quotation.valid_until,
+                version=r.Quotation.version,
+                is_deleted=r.Quotation.is_deleted,
+                created_at=r.Quotation.created_at,
+                created_by_name=user_name_map.get(r.Quotation.created_by_id),
             )
             for r in rows
         ],
@@ -453,6 +499,8 @@ async def send_quotation(
     version: int,
     user,
 ) -> QuotationOut:
+    # FIXED: Removed .returning() — not supported by SQLite (used in tests).
+    # Pattern: execute update → check rowcount → refetch.
     result = await db.execute(
         update(Quotation)
         .where(
@@ -466,18 +514,16 @@ async def send_quotation(
             version=Quotation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Quotation.id)
     )
 
-    sent_id = result.scalar_one_or_none()
-    if not sent_id:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Quotation cannot be sent (not in draft state or version conflict)",
             ErrorCode.QUOTATION_INVALID_STATE,
         )
 
-    q = await _get_quotation_with_items(db, sent_id)
+    q = await _get_quotation_with_items(db, quotation_id)
 
     # ERP-014 FIXED: activity before commit
     await emit_activity(
@@ -510,6 +556,7 @@ async def cancel_quotation(
         QuotationStatus.approved,
     }
 
+    # FIXED: Removed .returning() — not supported by SQLite (used in tests).
     result = await db.execute(
         update(Quotation)
         .where(
@@ -523,18 +570,16 @@ async def cancel_quotation(
             version=Quotation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Quotation.id)
     )
 
-    cancelled_id = result.scalar_one_or_none()
-    if not cancelled_id:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Quotation cannot be cancelled (invalid state or version conflict)",
             ErrorCode.QUOTATION_INVALID_STATE,
         )
 
-    q = await _get_quotation_with_items(db, cancelled_id)
+    q = await _get_quotation_with_items(db, quotation_id)
 
     # ERP-014 FIXED: activity before commit
     await emit_activity(
@@ -565,6 +610,7 @@ async def approve_quotation(
     # ERP-028: Approve from draft OR sent (natural workflow: draft → sent → approved)
     APPROVABLE_STATUSES = {QuotationStatus.draft, QuotationStatus.sent}
 
+    # FIXED: Removed .returning() — not supported by SQLite (used in tests).
     result = await db.execute(
         update(Quotation)
         .where(
@@ -578,14 +624,12 @@ async def approve_quotation(
             version=Quotation.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Quotation.id)
     )
 
-    approved_id = result.scalar_one_or_none()
-    if not approved_id:
+    if result.rowcount == 0:
         raise AppException(409, "Quotation cannot be approved", ErrorCode.QUOTATION_CANNOT_APPROVE)
 
-    q = await _get_quotation_with_items(db, approved_id)
+    q = await _get_quotation_with_items(db, quotation_id)
 
     # ERP-014 FIXED: activity before commit
     await emit_activity(

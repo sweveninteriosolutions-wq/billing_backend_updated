@@ -3,6 +3,6 @@
 from enum import Enum
 
 class GRNStatus(str, Enum):
-    DRAFT = "draft"
-    VERIFIED = "verified"
-    CANCELLED = "cancelled"
+    DRAFT = "DRAFT"
+    VERIFIED = "VERIFIED"
+    CANCELLED = "CANCELLED"

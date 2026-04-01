@@ -1,5 +1,7 @@
 # app/services/masters/customer_service.py
 
+import json
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, text
 from sqlalchemy.orm import selectinload
@@ -167,15 +169,15 @@ async def list_customers(
     params = {"limit": page_size, "offset": offset}
 
     if name:
-        conditions.append("c.name ILIKE :name")
+        conditions.append("LOWER(c.name) LIKE LOWER(:name)")
         params["name"] = f"%{name}%"
 
     if email:
-        conditions.append("c.email ILIKE :email")
+        conditions.append("LOWER(c.email) LIKE LOWER(:email)")
         params["email"] = f"%{email}%"
 
     if phone:
-        conditions.append("c.phone ILIKE :phone")
+        conditions.append("LOWER(c.phone) LIKE LOWER(:phone)")
         params["phone"] = f"%{phone}%"
 
     if is_active is not None:
@@ -209,6 +211,13 @@ async def list_customers(
     for r in rows:
         item = dict(r)
         item.pop("total", None)
+        # SQLite stores JSON columns as text strings; parse address back to dict/None
+        raw_address = item.get("address")
+        if isinstance(raw_address, str):
+            try:
+                item["address"] = json.loads(raw_address)
+            except (json.JSONDecodeError, TypeError):
+                item["address"] = None
         items.append(item)
 
     return CustomerListData(total=total, items=items)
@@ -272,6 +281,7 @@ async def update_customer(
         actor_role=user.role.capitalize(),
         actor_email=user.username,
         target_name=current.name,
+        changes=", ".join(data.keys()),
     )
 
     await db.commit()

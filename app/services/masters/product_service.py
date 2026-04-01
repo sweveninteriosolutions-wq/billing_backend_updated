@@ -3,6 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, asc, desc, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.models.masters.product_models import Product
 from app.schemas.masters.product_schemas import (
@@ -28,6 +29,9 @@ ALLOWED_SORT_FIELDS = {
 
 
 def _map_product(product: Product) -> ProductOut:
+    # Use __dict__ to avoid triggering lazy='raise' on audit relationships
+    created_by = product.__dict__.get("created_by")
+    updated_by = product.__dict__.get("updated_by")
     return ProductOut(
         id=product.id,
         sku=product.sku,
@@ -43,8 +47,8 @@ def _map_product(product: Product) -> ProductOut:
 
         created_by=product.created_by_id,
         updated_by=product.updated_by_id,
-        created_by_name=product.created_by_username,
-        updated_by_name=product.updated_by_username,
+        created_by_name=created_by.username if created_by else None,
+        updated_by_name=updated_by.username if updated_by else None,
 
         created_at=product.created_at,
         updated_at=product.updated_at,
@@ -107,9 +111,17 @@ async def create_product(db: AsyncSession, payload: ProductCreate, user):
     )
 
     await db.commit()
-    await db.refresh(product)
-    return _map_product(product)
 
+    # ✅ REFETCH WITH RELATIONS after commit
+    refreshed = await db.execute(
+        select(Product)
+        .options(
+            selectinload(Product.created_by),
+            selectinload(Product.updated_by),
+        )
+        .where(Product.id == product.id)
+    )
+    return _map_product(refreshed.scalar_one())
 
 
 async def list_products(
@@ -231,7 +243,15 @@ async def list_products(
 
 # ---------------- GET ----------------
 async def get_product(db: AsyncSession, product_id: int):
-    product = await db.get(Product, product_id)
+    result = await db.execute(
+        select(Product)
+        .options(
+            selectinload(Product.created_by),
+            selectinload(Product.updated_by),
+        )
+        .where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
     if not product or product.is_deleted:
         raise AppException(
             404,
@@ -328,13 +348,11 @@ async def update_product(
             version=Product.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Product)
     )
 
     result = await db.execute(stmt)
-    product = result.scalar_one_or_none()
 
-    if not product:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Product was modified by another process",
@@ -351,16 +369,34 @@ async def update_product(
         code=ActivityCode.UPDATE_PRODUCT,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=product.name,
+        target_name=current.name,
         changes=", ".join(changes),
     )
 
     await db.commit()
-    return _map_product(product)
+
+    # ✅ REFETCH WITH RELATIONS
+    refreshed = await db.execute(
+        select(Product)
+        .options(
+            selectinload(Product.created_by),
+            selectinload(Product.updated_by),
+        )
+        .where(Product.id == product_id)
+    )
+    return _map_product(refreshed.scalar_one())
 
 
 # ---------------- DEACTIVATE ----------------
 async def deactivate_product(db: AsyncSession, product_id: int, version: int, user):
+    current = await db.get(Product, product_id)
+    if not current or current.is_deleted:
+        raise AppException(
+            409,
+            "Product was modified or already deactivated",
+            ErrorCode.PRODUCT_VERSION_CONFLICT,
+        )
+
     stmt = (
         update(Product)
         .where(
@@ -373,13 +409,11 @@ async def deactivate_product(db: AsyncSession, product_id: int, version: int, us
             version=Product.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Product)
     )
 
     result = await db.execute(stmt)
-    product = result.scalar_one_or_none()
 
-    if not product:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Product was modified or already deactivated",
@@ -393,15 +427,33 @@ async def deactivate_product(db: AsyncSession, product_id: int, version: int, us
         code=ActivityCode.DEACTIVATE_PRODUCT,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=product.name,
+        target_name=current.name,
     )
 
     await db.commit()
-    return _map_product(product)
+
+    # ✅ REFETCH WITH RELATIONS
+    refreshed = await db.execute(
+        select(Product)
+        .options(
+            selectinload(Product.created_by),
+            selectinload(Product.updated_by),
+        )
+        .where(Product.id == product_id)
+    )
+    return _map_product(refreshed.scalar_one())
 
 
 # ---------------- REACTIVATE ----------------
 async def reactivate_product(db: AsyncSession, product_id: int, user):
+    current = await db.get(Product, product_id)
+    if not current or not current.is_deleted:
+        raise AppException(
+            409,
+            "Product was modified or not deactivated",
+            ErrorCode.PRODUCT_VERSION_CONFLICT,
+        )
+
     stmt = (
         update(Product)
         .where(
@@ -413,13 +465,11 @@ async def reactivate_product(db: AsyncSession, product_id: int, user):
             version=Product.version + 1,
             updated_by_id=user.id,
         )
-        .returning(Product)
     )
 
     result = await db.execute(stmt)
-    product = result.scalar_one_or_none()
 
-    if not product:
+    if result.rowcount == 0:
         raise AppException(
             409,
             "Product was modified or not deactivated",
@@ -433,8 +483,18 @@ async def reactivate_product(db: AsyncSession, product_id: int, user):
         code=ActivityCode.REACTIVATE_PRODUCT,
         actor_role=user.role.capitalize(),
         actor_email=user.username,
-        target_name=product.name,
+        target_name=current.name,
     )
 
     await db.commit()
-    return _map_product(product)
+
+    # ✅ REFETCH WITH RELATIONS
+    refreshed = await db.execute(
+        select(Product)
+        .options(
+            selectinload(Product.created_by),
+            selectinload(Product.updated_by),
+        )
+        .where(Product.id == product_id)
+    )
+    return _map_product(refreshed.scalar_one())

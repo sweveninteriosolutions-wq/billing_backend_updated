@@ -59,7 +59,7 @@ async def create_user(db: AsyncSession, payload: UserCreateSchema, admin: User):
     await db.refresh(user)
 
     logger.info("User created", extra={"user_id": user.id})
-    return UserDetailSchema.from_orm(user)
+    return UserDetailSchema.model_validate(user, from_attributes=True)
 
 
 # =========================
@@ -155,7 +155,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int):
     user = await db.get(User, user_id)
     if not user:
         raise AppException(404, "User not found", ErrorCode.USER_NOT_FOUND)
-    return UserDetailSchema.from_orm(user)
+    return UserDetailSchema.model_validate(user, from_attributes=True)
 
 
 # =========================
@@ -219,21 +219,24 @@ async def update_user(
             **values,
             version=User.version + 1,
         )
-        .returning(User)
     )
 
     result = await db.execute(stmt)
-    updated_user = result.scalar_one_or_none()
 
-    if not updated_user:
+    if result.rowcount == 0:
         raise AppException(409, "User was modified by another process", ErrorCode.USER_VERSION_CONFLICT)
+
+    # Compute the new values for activity logs (use payload data + fallback to original)
+    new_username = values.get("username", user.username)
+    new_role = values.get("role", user.role)
+    new_is_active = values.get("is_active", user.is_active)
 
     if "username" in values:
         await emit_activity(
             db=db, user_id=admin.id, username=admin.username,
             actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_EMAIL,
-            target_email=prev_email, new_email=updated_user.username,
+            target_email=prev_email, new_email=new_username,
         )
 
     if "password_hash" in values:
@@ -241,7 +244,7 @@ async def update_user(
             db=db, user_id=admin.id, username=admin.username,
             actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_PASSWORD,
-            target_email=updated_user.username,
+            target_email=new_username,
         )
 
     if "role" in values:
@@ -249,23 +252,28 @@ async def update_user(
             db=db, user_id=admin.id, username=admin.username,
             actor_role=admin.role.capitalize(), actor_email=admin.username,
             code=ActivityCode.UPDATE_USER_ROLE,
-            target_email=updated_user.username, old_role=prev_role, new_role=updated_user.role,
+            target_email=new_username, old_role=prev_role, new_role=new_role,
         )
 
     if "is_active" in values:
         activity_code = (
             ActivityCode.DEACTIVATE_USER
-            if not updated_user.is_active
+            if not new_is_active
             else ActivityCode.REACTIVATE_USER
         )
         await emit_activity(
             db=db, user_id=admin.id, username=admin.username,
             actor_role=admin.role.capitalize(), actor_email=admin.username,
-            code=activity_code, target_email=updated_user.username,
+            code=activity_code, target_email=new_username,
         )
 
     await db.commit()
-    return UserDetailSchema.from_orm(updated_user)
+
+    # ✅ REFETCH after commit — must expire first so SQLAlchemy re-fetches
+    # server-side columns (updated_at via onupdate=func.now()) from the DB.
+    updated_user = await db.get(User, user_id)
+    await db.refresh(updated_user)
+    return UserDetailSchema.model_validate(updated_user, from_attributes=True)
 
 
 # =========================
@@ -287,6 +295,12 @@ async def deactivate_user(
         extra={"target_user_id": user_id, "requested_version": version, "actor_id": admin.id},
     )
 
+    # Fetch current user for activity log
+    target_user = await db.get(User, user_id)
+    if not target_user or not target_user.is_active:
+        logger.warning("User already inactive or version conflict", extra={"target_user_id": user_id})
+        raise AppException(409, "User is already inactive", ErrorCode.USER_INACTIVE)
+
     stmt = (
         update(User)
         .where(
@@ -295,15 +309,12 @@ async def deactivate_user(
             User.is_active.is_(True),
         )
         .values(is_active=False, version=User.version + 1)
-        .returning(User)
     )
 
     result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
 
-    if not user:
+    if result.rowcount == 0:
         logger.warning("User already inactive or version conflict", extra={"target_user_id": user_id})
-        # ERP-024 FIXED: Use specific error code USER_INACTIVE instead of generic CONFLICT.
         raise AppException(409, "User is already inactive", ErrorCode.USER_INACTIVE)
 
     await emit_activity(
@@ -313,13 +324,16 @@ async def deactivate_user(
         code=ActivityCode.DEACTIVATE_USER,
         actor_role=admin.role,
         actor_email=admin.username,
-        target_email=user.username,
+        target_email=target_user.username,
     )
 
     await db.commit()
 
+    # ✅ REFETCH after commit — refresh to get server-side updated_at
+    user = await db.get(User, user_id)
+    await db.refresh(user)
     logger.info("User deactivated successfully", extra={"target_user_id": user.id, "new_version": user.version})
-    return UserDetailSchema.from_orm(user)
+    return UserDetailSchema.model_validate(user, from_attributes=True)
 
 
 # =========================
@@ -336,6 +350,12 @@ async def reactivate_user(
         extra={"target_user_id": user_id, "requested_version": version, "actor_id": admin.id},
     )
 
+    # Fetch current user for activity log
+    target_user = await db.get(User, user_id)
+    if not target_user or target_user.is_active:
+        logger.warning("User already active or version conflict", extra={"target_user_id": user_id})
+        raise AppException(409, "User is already active", ErrorCode.USER_ALREADY_ACTIVE)
+
     stmt = (
         update(User)
         .where(
@@ -344,15 +364,12 @@ async def reactivate_user(
             User.is_active.is_(False),
         )
         .values(is_active=True, version=User.version + 1)
-        .returning(User)
     )
 
     result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
 
-    if not user:
+    if result.rowcount == 0:
         logger.warning("User already active or version conflict", extra={"target_user_id": user_id})
-        # ERP-024 FIXED: Use specific error code USER_ALREADY_ACTIVE instead of generic CONFLICT.
         raise AppException(409, "User is already active", ErrorCode.USER_ALREADY_ACTIVE)
 
     await emit_activity(
@@ -362,13 +379,16 @@ async def reactivate_user(
         code=ActivityCode.REACTIVATE_USER,
         actor_role=admin.role,
         actor_email=admin.username,
-        target_email=user.username,
+        target_email=target_user.username,
     )
 
     await db.commit()
 
+    # ✅ REFETCH after commit — refresh to get server-side updated_at
+    user = await db.get(User, user_id)
+    await db.refresh(user)
     logger.info("User reactivated successfully", extra={"target_user_id": user.id, "new_version": user.version})
-    return UserDetailSchema.from_orm(user)
+    return UserDetailSchema.model_validate(user, from_attributes=True)
 
 
 # =========================
