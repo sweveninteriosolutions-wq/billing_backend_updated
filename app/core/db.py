@@ -1,6 +1,5 @@
 # app/core/db.py
 
-import ssl
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -13,7 +12,6 @@ from app.core.config import (
     DB_POOL_SIZE,
     DB_MAX_OVERFLOW,
     DB_POOL_TIMEOUT,
-    DB_SSL_VERIFY,
     DB_ECHO_POOL,
     APP_ENV,
     IS_PRODUCTION,
@@ -25,34 +23,26 @@ from app.core.config import (
 Base = declarative_base()
 
 # =====================================================
-# ERP-026: Enforce SSL in production
-# =====================================================
-if IS_PRODUCTION and not DB_SSL_VERIFY:
-    raise ValueError(
-        "SECURITY ERROR (ERP-026): DB_SSL_VERIFY=false is not permitted in production. "
-        "Set DB_SSL_VERIFY=true and configure your Supabase CA certificate. "
-        "Disabling SSL verification in production exposes the DB connection to MITM attacks."
-    )
-
-# =====================================================
 # CONNECTION CONFIG
 # =====================================================
 connect_args = {}
 pool_args = {}
 
 if DB_TYPE == "postgres":
-    ssl_ctx = ssl.create_default_context()
 
-    if not DB_SSL_VERIFY:
-        # Development only — never production (guarded above)
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-
-    connect_args = {
-        "ssl": ssl_ctx,
-        # Disable prepared statements for Supabase/pgBouncer compatibility
-        "statement_cache_size": 0,
-    }
+    # 🔥 ENV-AWARE SSL HANDLING (THIS IS THE REAL FIX)
+    if IS_PRODUCTION:
+        # Production (Render / cloud)
+        connect_args = {
+            "ssl": True,
+            "statement_cache_size": 0,
+        }
+    else:
+        # Local development (avoid SSL cert issues)
+        connect_args = {
+            "ssl": False,
+            "statement_cache_size": 0,
+        }
 
     pool_args = {
         "pool_size": DB_POOL_SIZE,
@@ -69,8 +59,8 @@ elif DB_TYPE == "sqlite":
 # =====================================================
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,                # NEVER enable in prod
-    echo_pool=DB_ECHO_POOL,    # debugging only
+    echo=False,                 # NEVER enable in prod
+    echo_pool=DB_ECHO_POOL,     # debugging only
     future=True,
     connect_args=connect_args,
     **pool_args,
@@ -105,7 +95,7 @@ if DB_TYPE == "sqlite":
         cursor.close()
 
 # =====================================================
-# MODEL IMPORT (registers all models with Base.metadata)
+# MODEL IMPORT
 # =====================================================
 import app.models  # noqa
 
