@@ -1,5 +1,6 @@
 # app/core/db.py
 
+import ssl
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -30,15 +31,19 @@ pool_args = {}
 
 if DB_TYPE == "postgres":
 
-    # 🔥 ENV-AWARE SSL HANDLING (THIS IS THE REAL FIX)
     if IS_PRODUCTION:
-        # Production (Render / cloud)
+        # 🔥 FIX: SSL without strict verification (Supabase / pgBouncer safe)
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
         connect_args = {
-            "ssl": True,
-            "statement_cache_size": 0,
+            "ssl": ssl_ctx,
+            "statement_cache_size": 0,  # required for pgBouncer
         }
+
     else:
-        # Local development (avoid SSL cert issues)
+        # 🔥 Local development (avoid SSL issues completely)
         connect_args = {
             "ssl": False,
             "statement_cache_size": 0,
